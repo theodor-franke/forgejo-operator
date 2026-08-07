@@ -1,0 +1,14 @@
+forgejo-operator has been installed.
+
+This chart requires cert-manager to already be present in the cluster (it
+issues the webhook's TLS certificate). If the manager pod is stuck waiting
+on the "webhook-server-cert" Secret, that's why.
+
+Verify:
+
+  kubectl get pods -n {{ .Release.Namespace }}
+  kubectl get crds | grep forgejo.schranke.de
+
+Next, create a Forgejo resource pointing at your Forgejo instance's URL and
+credentials Secret — see config/samples/v1alpha1_forgejo.yaml for an
+example.

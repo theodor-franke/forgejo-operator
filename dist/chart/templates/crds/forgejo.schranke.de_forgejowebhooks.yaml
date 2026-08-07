@@ -1,0 +1,154 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    helm.sh/resource-policy: keep
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: forgejowebhooks.forgejo.schranke.de
+spec:
+  group: forgejo.schranke.de
+  names:
+    kind: ForgejoWebhook
+    listKind: ForgejoWebhookList
+    plural: forgejowebhooks
+    singular: forgejowebhook
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ForgejoWebhook is the Schema for the forgejowebhooks API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ForgejoWebhookSpec defines the desired state of ForgejoWebhook.
+            properties:
+              branchFilter:
+                description: |-
+                  BranchFilter restricts push/create/delete events to matching
+                  branches (glob syntax). Defaults to "*" (all branches).
+                type: string
+              events:
+                description: |-
+                  Events lists the repository events that trigger this webhook.
+                  Defaults to ["push"].
+                items:
+                  type: string
+                type: array
+              receiverRef:
+                description: |-
+                  ReceiverRef references the Flux Receiver object this webhook
+                  delivers events to. Its status.webhookPath is combined with the
+                  target Forgejo instance's spec.base to build the webhook's target
+                  URL, and the Secret it references (spec.secretRef) supplies the
+                  webhook's shared signing secret.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                required:
+                - name
+                - namespace
+                type: object
+              repository:
+                description: |-
+                  Repository targets a repository directly by URL, without going
+                  through a ForgejoRepository object. Exactly one of RepositoryRef or
+                  Repository must be set.
+                properties:
+                  instanceRef:
+                    description: |-
+                      InstanceRef references the cluster-scoped Forgejo instance the
+                      repository lives on.
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  url:
+                    description: |-
+                      URL is the repository's web URL on that instance, e.g.
+                      https://forgejo.example.com/my-org/my-repo. The owner and repository
+                      name are parsed out of its path; the scheme and host are otherwise
+                      unused (the instance's own spec.url is what's actually called).
+                    type: string
+                required:
+                - instanceRef
+                - url
+                type: object
+              repositoryRef:
+                description: |-
+                  RepositoryRef references a ForgejoRepository object, in the same
+                  namespace as this object, to create the webhook on. Exactly one of
+                  RepositoryRef or Repository must be set.
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+              suspend:
+                description: Suspend disables the webhook on Forgejo without deleting
+                  it.
+                type: boolean
+              type:
+                description: |-
+                  Type is the Forgejo webhook payload type. Defaults to "forgejo",
+                  which is what Flux's "gitea" Receiver type expects (Forgejo is a
+                  Gitea fork and shares its webhook signature format).
+                type: string
+            required:
+            - receiverRef
+            type: object
+            x-kubernetes-validations:
+            - message: exactly one of repositoryRef or repository must be set
+              rule: has(self.repositoryRef) != has(self.repository)
+          status:
+            description: ForgejoWebhookStatus defines the observed state of ForgejoWebhook.
+            properties:
+              hookID:
+                description: HookID is the ID of the webhook object on the Forgejo
+                  repository.
+                format: int64
+                type: integer
+              message:
+                description: |-
+                  Message contains additional detail when Status is not "Ready", such as
+                  the last error encountered while talking to the Forgejo instance or
+                  resolving the referenced Receiver.
+                type: string
+              status:
+                description: |-
+                  Status is a short, human-readable summary of the reconciliation state,
+                  e.g. "Ready" or "Error".
+                type: string
+              url:
+                description: |-
+                  URL is the full webhook target URL last registered on Forgejo,
+                  computed from the referenced Receiver's status.webhookPath and the
+                  Forgejo instance's spec.base.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

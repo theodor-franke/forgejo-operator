@@ -1,0 +1,61 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets
+  - forgejoes
+  - forgejoorganizations
+  - forgejorepositories
+  - forgejowebhooks
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets/finalizers
+  - forgejoes/finalizers
+  - forgejoorganizations/finalizers
+  - forgejorepositories/finalizers
+  - forgejowebhooks/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets/status
+  - forgejoes/status
+  - forgejoorganizations/status
+  - forgejorepositories/status
+  - forgejowebhooks/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - notification.toolkit.fluxcd.io
+  resources:
+  - receivers
+  verbs:
+  - get
+  - list
+  - watch

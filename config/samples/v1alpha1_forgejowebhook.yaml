@@ -1,0 +1,21 @@
+apiVersion: forgejo.schranke.de/v1alpha1
+kind: ForgejoWebhook
+metadata:
+  labels:
+    app.kubernetes.io/name: forgejo-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: forgejowebhook-sample
+  namespace: default
+spec:
+  # Exactly one of repositoryRef or repository must be set.
+  repositoryRef:
+    name: forgejorepository-sample
+  # repository:
+  #   instanceRef:
+  #     name: forgejo-sample
+  #   url: https://forgejo.example.com/my-org/my-repo
+  receiverRef:
+    name: forgejo-sample
+    namespace: flux-system
+  events:
+    - push

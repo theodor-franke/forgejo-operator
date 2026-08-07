@@ -1,0 +1,29 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ include "forgejo-operator.fullname" . }}-validating-webhook-configuration
+  labels:
+    {{- include "forgejo-operator.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "forgejo-operator.fullname" . }}-serving-cert
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: {{ include "forgejo-operator.fullname" . }}-webhook-service
+      namespace: {{ .Release.Namespace }}
+      path: /validate-forgejo-schranke-de-v1alpha1-forgejoorganization
+  failurePolicy: Fail
+  name: vforgejoorganization-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - forgejo.schranke.de
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - forgejoorganizations
+  sideEffects: None

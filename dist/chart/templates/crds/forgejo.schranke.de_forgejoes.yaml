@@ -1,0 +1,125 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    helm.sh/resource-policy: keep
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: forgejoes.forgejo.schranke.de
+spec:
+  group: forgejo.schranke.de
+  names:
+    kind: Forgejo
+    listKind: ForgejoList
+    plural: forgejoes
+    singular: forgejo
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Forgejo is the Schema for the forgejoes API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ForgejoSpec defines the desired state of Forgejo.
+            properties:
+              authRef:
+                description: |-
+                  AuthSecretRef points at the Secret holding credentials used to authenticate
+                  against the Forgejo instance's API.
+                properties:
+                  passwordKey:
+                    type: string
+                  secretName:
+                    type: string
+                  secretNamespace:
+                    type: string
+                  usernameKey:
+                    type: string
+                required:
+                - passwordKey
+                - secretName
+                - secretNamespace
+                - usernameKey
+                type: object
+              defaultPullKeySecretRef:
+                description: |-
+                  DefaultPullKeySecretRef references the Secret holding a shared SSH
+                  deploy key pair that gets registered as a read-only deploy key on
+                  every ForgejoRepository targeting this instance (a repository can opt
+                  out via its own spec.optOutDefaultPullKey). If the Secret does not
+                  already exist, the operator generates a new ed25519 keypair and
+                  creates it, with keys "publicKey" (OpenSSH authorized_keys format),
+                  "privateKey" (OpenSSH PEM format), and "knownHosts" (this instance's
+                  SSH host key, discovered via SSHHost/SSHPort, in known_hosts format).
+                  Leave unset to not manage a default pull key for this instance.
+                properties:
+                  secretName:
+                    type: string
+                  secretNamespace:
+                    type: string
+                required:
+                - secretName
+                - secretNamespace
+                type: object
+              sshHost:
+                description: |-
+                  SSHHost is the hostname Forgejo's SSH git server is reachable at.
+                  Only used to discover the server's SSH host key when
+                  DefaultPullKeySecretRef is set and its Secret needs to be created.
+                  Defaults to the hostname portion of Url.
+                type: string
+              sshPort:
+                description: |-
+                  SSHPort is the port Forgejo's SSH git server listens on. Only used
+                  alongside SSHHost. Defaults to 22.
+                format: int32
+                type: integer
+              url:
+                description: |-
+                  Url is the base URL of the already-running Forgejo instance to manage,
+                  e.g. https://forgejo.example.com.
+                type: string
+            required:
+            - authRef
+            - url
+            type: object
+          status:
+            description: ForgejoStatus defines the observed state of Forgejo.
+            properties:
+              message:
+                description: |-
+                  Message contains additional detail when Status is not "Ready", such as the
+                  last error encountered while talking to the instance.
+                type: string
+              status:
+                description: |-
+                  Status is a short, human-readable summary of the reconciliation state,
+                  e.g. "Ready" or "Error".
+                type: string
+              version:
+                description: Version is the Forgejo server version reported by the
+                  instance's info endpoint.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

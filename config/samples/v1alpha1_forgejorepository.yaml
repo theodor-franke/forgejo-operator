@@ -1,0 +1,18 @@
+apiVersion: forgejo.schranke.de/v1alpha1
+kind: ForgejoRepository
+metadata:
+  labels:
+    app.kubernetes.io/name: forgejo-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: forgejorepository-sample
+  namespace: default
+spec:
+  organizationRef:
+    name: forgejoorganization-sample
+  description: Sample repository managed by forgejo-operator
+  private: true
+  autoInit: true
+  defaultBranch: main
+  # Set to true to skip adding the Forgejo instance's shared default pull
+  # key (see the Forgejo sample's defaultPullKeySecretRef) to this repo.
+  optOutDefaultPullKey: false

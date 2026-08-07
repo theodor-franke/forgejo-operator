@@ -1,0 +1,28 @@
+apiVersion: forgejo.schranke.de/v1alpha1
+kind: Forgejo
+metadata:
+  labels:
+    app.kubernetes.io/name: forgejo-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: forgejo-sample
+spec:
+  url: https://forgejo.example.com
+  authRef:
+    secretName: forgejo-sample-credentials
+    secretNamespace: default
+    usernameKey: username
+    passwordKey: password
+  # Optional: give every repository on this instance a shared read-only SSH
+  # deploy key by default (see ForgejoRepository's optOutDefaultPullKey to
+  # skip it for a specific repo). If forgejo-sample-pull-key doesn't already
+  # exist, the operator generates a new keypair and creates it.
+  defaultPullKeySecretRef:
+    secretName: forgejo-sample-pull-key
+    secretNamespace: default
+  sshHost: forgejo.example.com
+  sshPort: 22
+  # Optional: required only if you also create ForgejoWebhook objects
+  # targeting this instance. This is the externally reachable base URL of
+  # the Flux notification-controller webhook receiver endpoint, combined
+  # with a Receiver's status.webhookPath to build the full webhook URL.
+  base: https://flux-webhook.example.com

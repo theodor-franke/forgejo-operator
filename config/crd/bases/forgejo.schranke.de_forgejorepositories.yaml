@@ -1,0 +1,104 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: forgejorepositories.forgejo.schranke.de
+spec:
+  group: forgejo.schranke.de
+  names:
+    kind: ForgejoRepository
+    listKind: ForgejoRepositoryList
+    plural: forgejorepositories
+    singular: forgejorepository
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ForgejoRepository is the Schema for the forgejorepositories API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ForgejoRepositorySpec defines the desired state of ForgejoRepository.
+            properties:
+              autoInit:
+                description: |-
+                  AutoInit creates an initial commit (README, .gitignore, LICENSE per
+                  the fields below) when the repository is first created. Ignored once
+                  the repository already exists. A repository created without an
+                  initial commit has no DefaultBranch until something is pushed to it.
+                type: boolean
+              defaultBranch:
+                description: |-
+                  DefaultBranch sets the repository's default branch. On creation it
+                  only takes effect when AutoInit is true.
+                type: string
+              description:
+                description: Description is shown on the repository's page in Forgejo.
+                type: string
+              optOutDefaultPullKey:
+                description: |-
+                  OptOutDefaultPullKey skips adding the Forgejo instance's shared
+                  default deploy key (see Forgejo.spec.defaultPullKeySecretRef) to this
+                  repository. Has no effect if the instance doesn't have one configured.
+                type: boolean
+              organizationRef:
+                description: |-
+                  OrganizationRef references the ForgejoOrganization this repository
+                  belongs to, in the same namespace as this object.
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+              private:
+                description: |-
+                  Private makes the repository visible only to the organization's
+                  members and explicitly added collaborators.
+                type: boolean
+              template:
+                description: |-
+                  Template marks the repository as a template others can generate new
+                  repositories from.
+                type: boolean
+            required:
+            - organizationRef
+            type: object
+          status:
+            description: ForgejoRepositoryStatus defines the observed state of ForgejoRepository.
+            properties:
+              message:
+                description: |-
+                  Message contains additional detail when Status is not "Ready", such as
+                  the last error encountered while talking to the Forgejo instance.
+                type: string
+              status:
+                description: |-
+                  Status is a short, human-readable summary of the reconciliation state,
+                  e.g. "Ready" or "Error".
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

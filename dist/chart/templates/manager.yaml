@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "forgejo-operator.fullname" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "forgejo-operator.labels" . | nindent 4 }}
+    control-plane: controller-manager
+spec:
+  # Single replica, deliberately: no leader-election is configured (no
+  # --leader-elect arg below, no coordination.k8s.io/leases RBAC), so
+  # running more than one replica would let them race each other.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: forgejo-operator
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      control-plane: controller-manager
+  template:
+    metadata:
+      labels:
+        {{- include "forgejo-operator.labels" . | nindent 8 }}
+        control-plane: controller-manager
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+    spec:
+      serviceAccountName: {{ include "forgejo-operator.fullname" . }}-controller-manager
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: manager
+        image: "{{ .Values.manager.image.repository }}:{{ .Values.manager.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.manager.image.pullPolicy }}
+        command:
+        - /manager
+        args:
+        - --metrics-bind-address=:{{ .Values.metrics.port }}
+        - --health-probe-bind-address=:8081
+        - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+        ports:
+        - containerPort: {{ .Values.webhook.port }}
+          name: webhook-server
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          {{- toYaml .Values.manager.resources | nindent 10 }}
+        volumeMounts:
+        - mountPath: /tmp/k8s-webhook-server/serving-certs
+          name: webhook-certs
+          readOnly: true
+      volumes:
+      - name: webhook-certs
+        secret:
+          secretName: webhook-server-cert

@@ -1,0 +1,15 @@
+apiVersion: v2
+name: forgejo-operator
+description: >-
+  A Helm chart to install forgejo-operator, a Kubernetes operator that
+  configures an already-running Forgejo instance (organizations, teams,
+  repositories, Actions secrets, deploy keys).
+type: application
+
+version: 0.1.0
+appVersion: "0.1.0"
+
+keywords:
+  - kubernetes
+  - operator
+  - forgejo

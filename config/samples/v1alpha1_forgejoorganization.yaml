@@ -1,0 +1,28 @@
+apiVersion: forgejo.schranke.de/v1alpha1
+kind: ForgejoOrganization
+metadata:
+  labels:
+    app.kubernetes.io/name: forgejo-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: forgejoorganization-sample
+  namespace: default
+spec:
+  instanceRef:
+    name: forgejo-sample
+  visibility: private
+  adminPermissionRights: false
+  teams:
+    - name: developer
+      description: Day-to-day contributors
+      groups:
+        - projects-dev
+      repoPermissions:
+        code: write
+        issues: write
+        pullRequests: write
+        releases: read
+    - name: operators
+      accessMode: admin
+      canCreateOrgRepo: true
+      groups:
+        - its-circle-plattformautomatisierung

@@ -1,0 +1,30 @@
+# The webhook Deployment (templates/manager.yaml) mounts a Secret named
+# "webhook-server-cert"; nothing else in this chart creates it except this
+# Issuer/Certificate pair. cert-manager is a hard requirement of this
+# chart — there is no other supported way to provision the webhook's TLS
+# cert, so there's no enabled/disabled toggle here.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "forgejo-operator.fullname" . }}-selfsigned-issuer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "forgejo-operator.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "forgejo-operator.fullname" . }}-serving-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "forgejo-operator.labels" . | nindent 4 }}
+spec:
+  dnsNames:
+  - {{ include "forgejo-operator.fullname" . }}-webhook-service.{{ .Release.Namespace }}.svc
+  - {{ include "forgejo-operator.fullname" . }}-webhook-service.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ include "forgejo-operator.fullname" . }}-selfsigned-issuer
+  secretName: webhook-server-cert

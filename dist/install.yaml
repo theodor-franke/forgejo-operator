@@ -1,0 +1,1131 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+    control-plane: controller-manager
+  name: forgejo-operator-system
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: forgejoactionsecrets.forgejo.schranke.de
+spec:
+  group: forgejo.schranke.de
+  names:
+    kind: ForgejoActionSecret
+    listKind: ForgejoActionSecretList
+    plural: forgejoactionsecrets
+    singular: forgejoactionsecret
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ForgejoActionSecret is the Schema for the forgejoactionsecrets
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ForgejoActionSecretSpec defines the desired state of ForgejoActionSecret.
+            properties:
+              name:
+                description: |-
+                  Name is the action secret's name on Forgejo, e.g. DOCKER_PASSWORD. It
+                  must start with a letter or underscore and contain only letters,
+                  digits, and underscores; Forgejo uppercases it regardless of the case
+                  used here.
+                pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                type: string
+              organizationRef:
+                description: |-
+                  OrganizationRef references the ForgejoOrganization this action secret
+                  belongs to.
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+              valueFrom:
+                description: |-
+                  ValueFrom sources the action secret's value from a key in a
+                  Kubernetes Secret.
+                properties:
+                  key:
+                    type: string
+                  secretName:
+                    type: string
+                  secretNamespace:
+                    type: string
+                required:
+                - key
+                - secretName
+                - secretNamespace
+                type: object
+            required:
+            - name
+            - organizationRef
+            - valueFrom
+            type: object
+          status:
+            description: ForgejoActionSecretStatus defines the observed state of ForgejoActionSecret.
+            properties:
+              message:
+                description: |-
+                  Message contains additional detail when Status is not "Ready", such as
+                  the last error encountered while talking to the Forgejo instance.
+                type: string
+              status:
+                description: |-
+                  Status is a short, human-readable summary of the reconciliation state,
+                  e.g. "Ready" or "Error".
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: forgejoes.forgejo.schranke.de
+spec:
+  group: forgejo.schranke.de
+  names:
+    kind: Forgejo
+    listKind: ForgejoList
+    plural: forgejoes
+    singular: forgejo
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Forgejo is the Schema for the forgejoes API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ForgejoSpec defines the desired state of Forgejo.
+            properties:
+              authRef:
+                description: |-
+                  AuthSecretRef points at the Secret holding credentials used to authenticate
+                  against the Forgejo instance's API.
+                properties:
+                  passwordKey:
+                    type: string
+                  secretName:
+                    type: string
+                  secretNamespace:
+                    type: string
+                  usernameKey:
+                    type: string
+                required:
+                - passwordKey
+                - secretName
+                - secretNamespace
+                - usernameKey
+                type: object
+              defaultPullKeySecretRef:
+                description: |-
+                  DefaultPullKeySecretRef references the Secret holding a shared SSH
+                  deploy key pair that gets registered as a read-only deploy key on
+                  every ForgejoRepository targeting this instance (a repository can opt
+                  out via its own spec.optOutDefaultPullKey). If the Secret does not
+                  already exist, the operator generates a new ed25519 keypair and
+                  creates it, with keys "publicKey" (OpenSSH authorized_keys format),
+                  "privateKey" (OpenSSH PEM format), and "knownHosts" (this instance's
+                  SSH host key, discovered via SSHHost/SSHPort, in known_hosts format).
+                  Leave unset to not manage a default pull key for this instance.
+                properties:
+                  secretName:
+                    type: string
+                  secretNamespace:
+                    type: string
+                required:
+                - secretName
+                - secretNamespace
+                type: object
+              sshHost:
+                description: |-
+                  SSHHost is the hostname Forgejo's SSH git server is reachable at.
+                  Only used to discover the server's SSH host key when
+                  DefaultPullKeySecretRef is set and its Secret needs to be created.
+                  Defaults to the hostname portion of Url.
+                type: string
+              sshPort:
+                description: |-
+                  SSHPort is the port Forgejo's SSH git server listens on. Only used
+                  alongside SSHHost. Defaults to 22.
+                format: int32
+                type: integer
+              url:
+                description: |-
+                  Url is the base URL of the already-running Forgejo instance to manage,
+                  e.g. https://forgejo.example.com.
+                type: string
+            required:
+            - authRef
+            - url
+            type: object
+          status:
+            description: ForgejoStatus defines the observed state of Forgejo.
+            properties:
+              message:
+                description: |-
+                  Message contains additional detail when Status is not "Ready", such as the
+                  last error encountered while talking to the instance.
+                type: string
+              status:
+                description: |-
+                  Status is a short, human-readable summary of the reconciliation state,
+                  e.g. "Ready" or "Error".
+                type: string
+              version:
+                description: Version is the Forgejo server version reported by the
+                  instance's info endpoint.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: forgejoorganizations.forgejo.schranke.de
+spec:
+  group: forgejo.schranke.de
+  names:
+    kind: ForgejoOrganization
+    listKind: ForgejoOrganizationList
+    plural: forgejoorganizations
+    singular: forgejoorganization
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ForgejoOrganization is the Schema for the forgejoorganizations
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ForgejoOrganizationSpec defines the desired state of ForgejoOrganization.
+            properties:
+              adminPermissionRights:
+                description: |-
+                  AdminPermissionRights allows repository administrators to add/remove team
+                  members and change team access without being an organization owner.
+                type: boolean
+              instanceRef:
+                description: |-
+                  InstanceRef references the Forgejo instance this organization should be
+                  created on, by the name of a cluster-scoped Forgejo resource.
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+              teams:
+                description: |-
+                  Teams are created (and kept in sync) on the organization. Each team's
+                  Groups are also aggregated, across every ForgejoOrganization pointing at
+                  the same instance, into the claimed-group-to-organization-team mapping
+                  configured on that instance's first OAuth2/OIDC authentication source.
+                items:
+                  properties:
+                    accessMode:
+                      default: custom
+                      description: |-
+                        AccessMode selects between Forgejo's two team permission modes:
+                        "custom" (the default), where RepoPermissions grants access
+                        per repository feature, or "admin", where members get full
+                        administrator access to every feature of every team repository
+                        (including deleting repositories and managing collaborators) and
+                        RepoPermissions is ignored.
+                      enum:
+                      - custom
+                      - admin
+                      type: string
+                    canCreateOrgRepo:
+                      description: |-
+                        CanCreateOrgRepo allows members of this team to create new repositories
+                        in the organization.
+                      type: boolean
+                    description:
+                      description: Description is shown on the team's page in Forgejo.
+                      type: string
+                    groups:
+                      description: |-
+                        Groups are the names of IdP-claimed groups that should be mapped to this
+                        team via the instance's authentication source (see ForgejoOrganizationSpec.Teams).
+                      items:
+                        type: string
+                      type: array
+                    includesAllRepositories:
+                      description: |-
+                        IncludesAllRepositories gives the team access to all current and future
+                        repositories in the organization, rather than only explicitly assigned ones.
+                      type: boolean
+                    name:
+                      description: Name is both the team's name in Kubernetes and
+                        its name on Forgejo.
+                      type: string
+                    repoPermissions:
+                      description: |-
+                        RepoPermissions sets the team's per-feature repository access when
+                        AccessMode is "custom" (the default). Every field defaults to "none".
+                      properties:
+                        actions:
+                          default: none
+                          enum:
+                          - none
+                          - read
+                          - write
+                          type: string
+                        code:
+                          default: none
+                          enum:
+                          - none
+                          - read
+                          - write
+                          type: string
+                        issues:
+                          default: none
+                          enum:
+                          - none
+                          - read
+                          - write
+                          type: string
+                        packages:
+                          default: none
+                          enum:
+                          - none
+                          - read
+                          - write
+                          type: string
+                        projects:
+                          default: none
+                          enum:
+                          - none
+                          - read
+                          - write
+                          type: string
+                        pullRequests:
+                          default: none
+                          enum:
+                          - none
+                          - read
+                          - write
+                          type: string
+                        releases:
+                          default: none
+                          enum:
+                          - none
+                          - read
+                          - write
+                          type: string
+                        wiki:
+                          default: none
+                          enum:
+                          - none
+                          - read
+                          - write
+                          type: string
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+              visibility:
+                default: public
+                description: Visibility controls who can see the organization.
+                enum:
+                - public
+                - limited
+                - private
+                type: string
+            required:
+            - instanceRef
+            type: object
+          status:
+            description: ForgejoOrganizationStatus defines the observed state of ForgejoOrganization.
+            properties:
+              message:
+                description: |-
+                  Message contains additional detail when Status is not "Ready", such as the
+                  last error encountered while talking to the Forgejo instance.
+                type: string
+              status:
+                description: |-
+                  Status is a short, human-readable summary of the reconciliation state,
+                  e.g. "Ready" or "Error".
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: forgejorepositories.forgejo.schranke.de
+spec:
+  group: forgejo.schranke.de
+  names:
+    kind: ForgejoRepository
+    listKind: ForgejoRepositoryList
+    plural: forgejorepositories
+    singular: forgejorepository
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ForgejoRepository is the Schema for the forgejorepositories API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ForgejoRepositorySpec defines the desired state of ForgejoRepository.
+            properties:
+              autoInit:
+                description: |-
+                  AutoInit creates an initial commit (README, .gitignore, LICENSE per
+                  the fields below) when the repository is first created. Ignored once
+                  the repository already exists. A repository created without an
+                  initial commit has no DefaultBranch until something is pushed to it.
+                type: boolean
+              defaultBranch:
+                description: |-
+                  DefaultBranch sets the repository's default branch. On creation it
+                  only takes effect when AutoInit is true.
+                type: string
+              description:
+                description: Description is shown on the repository's page in Forgejo.
+                type: string
+              optOutDefaultPullKey:
+                description: |-
+                  OptOutDefaultPullKey skips adding the Forgejo instance's shared
+                  default deploy key (see Forgejo.spec.defaultPullKeySecretRef) to this
+                  repository. Has no effect if the instance doesn't have one configured.
+                type: boolean
+              organizationRef:
+                description: |-
+                  OrganizationRef references the ForgejoOrganization this repository
+                  belongs to, in the same namespace as this object.
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+              private:
+                description: |-
+                  Private makes the repository visible only to the organization's
+                  members and explicitly added collaborators.
+                type: boolean
+              template:
+                description: |-
+                  Template marks the repository as a template others can generate new
+                  repositories from.
+                type: boolean
+            required:
+            - organizationRef
+            type: object
+          status:
+            description: ForgejoRepositoryStatus defines the observed state of ForgejoRepository.
+            properties:
+              message:
+                description: |-
+                  Message contains additional detail when Status is not "Ready", such as
+                  the last error encountered while talking to the Forgejo instance.
+                type: string
+              status:
+                description: |-
+                  Status is a short, human-readable summary of the reconciliation state,
+                  e.g. "Ready" or "Error".
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-controller-manager
+  namespace: forgejo-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-leader-election-role
+  namespace: forgejo-operator-system
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-forgejo-admin-role
+rules:
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoes
+  verbs:
+  - '*'
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoes/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-forgejo-editor-role
+rules:
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoes/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-forgejo-viewer-role
+rules:
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoes/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-forgejoactionsecret-admin-role
+rules:
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets
+  verbs:
+  - '*'
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-forgejoactionsecret-editor-role
+rules:
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-forgejoactionsecret-viewer-role
+rules:
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-forgejoorganization-admin-role
+rules:
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoorganizations
+  verbs:
+  - '*'
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoorganizations/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-forgejoorganization-editor-role
+rules:
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoorganizations
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoorganizations/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-forgejoorganization-viewer-role
+rules:
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoorganizations
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoorganizations/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-forgejorepository-admin-role
+rules:
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejorepositories
+  verbs:
+  - '*'
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejorepositories/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-forgejorepository-editor-role
+rules:
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejorepositories
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejorepositories/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-forgejorepository-viewer-role
+rules:
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejorepositories
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejorepositories/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: forgejo-operator-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets
+  - forgejoes
+  - forgejoorganizations
+  - forgejorepositories
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets/finalizers
+  - forgejoes/finalizers
+  - forgejoorganizations/finalizers
+  - forgejorepositories/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets/status
+  - forgejoes/status
+  - forgejoorganizations/status
+  - forgejorepositories/status
+  verbs:
+  - get
+  - patch
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: forgejo-operator-metrics-auth-role
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: forgejo-operator-metrics-reader
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-leader-election-rolebinding
+  namespace: forgejo-operator-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: forgejo-operator-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: forgejo-operator-controller-manager
+  namespace: forgejo-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: forgejo-operator-manager-role
+subjects:
+- kind: ServiceAccount
+  name: forgejo-operator-controller-manager
+  namespace: forgejo-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: forgejo-operator-metrics-auth-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: forgejo-operator-metrics-auth-role
+subjects:
+- kind: ServiceAccount
+  name: forgejo-operator-controller-manager
+  namespace: forgejo-operator-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+    control-plane: controller-manager
+  name: forgejo-operator-controller-manager-metrics-service
+  namespace: forgejo-operator-system
+spec:
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+  selector:
+    app.kubernetes.io/name: forgejo-operator
+    control-plane: controller-manager
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+  name: forgejo-operator-webhook-service
+  namespace: forgejo-operator-system
+spec:
+  ports:
+  - port: 443
+    protocol: TCP
+    targetPort: 9443
+  selector:
+    app.kubernetes.io/name: forgejo-operator
+    control-plane: controller-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: forgejo-operator
+    control-plane: controller-manager
+  name: forgejo-operator-controller-manager
+  namespace: forgejo-operator-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: forgejo-operator
+      control-plane: controller-manager
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        app.kubernetes.io/name: forgejo-operator
+        control-plane: controller-manager
+    spec:
+      containers:
+      - args:
+        - --metrics-bind-address=:8443
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+        command:
+        - /manager
+        image: controller:latest
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        name: manager
+        ports:
+        - containerPort: 9443
+          name: webhook-server
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - mountPath: /tmp/k8s-webhook-server/serving-certs
+          name: webhook-certs
+          readOnly: true
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: forgejo-operator-controller-manager
+      terminationGracePeriodSeconds: 10
+      volumes:
+      - name: webhook-certs
+        secret:
+          secretName: webhook-server-cert
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: forgejo-operator-validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: forgejo-operator-webhook-service
+      namespace: forgejo-operator-system
+      path: /validate-forgejo-schranke-de-v1alpha1-forgejoorganization
+  failurePolicy: Fail
+  name: vforgejoorganization-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - forgejo.schranke.de
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - forgejoorganizations
+  sideEffects: None

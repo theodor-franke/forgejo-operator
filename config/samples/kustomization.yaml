@@ -1,0 +1,8 @@
+## Append samples of your project ##
+resources:
+- v1alpha1_forgejo.yaml
+- v1alpha1_forgejoorganization.yaml
+- v1alpha1_forgejoactionsecret.yaml
+- v1alpha1_forgejorepository.yaml
+- v1alpha1_forgejowebhook.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

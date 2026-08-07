@@ -1,0 +1,125 @@
+# Always ClusterRole/ClusterRoleBinding, deliberately not conditional.
+#
+# A Role/RoleBinding can never authorize access to a cluster-scoped
+# resource — and Forgejo (unlike ForgejoOrganization/ForgejoActionSecret/
+# ForgejoRepository) is cluster-scoped. The manager's own cache is also not
+# namespace-restricted (no WATCH_NAMESPACE support in cmd/main.go), so a
+# namespace-scoped RBAC mode wouldn't actually work for the other three CRDs
+# either. Don't add a namespaced-vs-cluster toggle here without also fixing
+# that; see CLAUDE.md.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "forgejo-operator.fullname" . }}-manager-role
+  labels:
+    {{- include "forgejo-operator.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets
+  - forgejoes
+  - forgejoorganizations
+  - forgejorepositories
+  - forgejowebhooks
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets/finalizers
+  - forgejoes/finalizers
+  - forgejoorganizations/finalizers
+  - forgejorepositories/finalizers
+  - forgejowebhooks/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - forgejo.schranke.de
+  resources:
+  - forgejoactionsecrets/status
+  - forgejoes/status
+  - forgejoorganizations/status
+  - forgejorepositories/status
+  - forgejowebhooks/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - notification.toolkit.fluxcd.io
+  resources:
+  - receivers
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "forgejo-operator.fullname" . }}-manager-rolebinding
+  labels:
+    {{- include "forgejo-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "forgejo-operator.fullname" . }}-manager-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "forgejo-operator.fullname" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+---
+# Needed for the metrics endpoint's per-request auth (cmd/main.go's
+# --metrics-secure default is true): the manager itself calls
+# TokenReview/SubjectAccessReview to validate each scrape request's bearer
+# token, so this binds to the manager's own ServiceAccount, not a scraper's.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "forgejo-operator.fullname" . }}-metrics-auth-role
+  labels:
+    {{- include "forgejo-operator.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "forgejo-operator.fullname" . }}-metrics-auth-rolebinding
+  labels:
+    {{- include "forgejo-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "forgejo-operator.fullname" . }}-metrics-auth-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "forgejo-operator.fullname" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}

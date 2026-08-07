@@ -1,0 +1,30 @@
+# A minimal stand-in for Flux's real notification.toolkit.fluxcd.io/v1
+# Receiver CRD, installed only so envtest's apiserver has a schema to
+# validate/store test Receiver objects against (see fluxreceiver.go, which
+# talks to a real Receiver via an unstructured client rather than depending
+# on the fluxcd notification-controller module). Deliberately loose
+# (x-kubernetes-preserve-unknown-fields) rather than mirroring every real
+# field: tests only ever set/read spec.secretRef.name and
+# status.webhookPath.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: receivers.notification.toolkit.fluxcd.io
+spec:
+  group: notification.toolkit.fluxcd.io
+  names:
+    kind: Receiver
+    listKind: ReceiverList
+    plural: receivers
+    singular: receiver
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        x-kubernetes-preserve-unknown-fields: true
