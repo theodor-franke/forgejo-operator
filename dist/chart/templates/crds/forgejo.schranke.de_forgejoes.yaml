@@ -58,6 +58,15 @@ spec:
                 - secretNamespace
                 - usernameKey
                 type: object
+              base:
+                description: |-
+                  Base is the externally reachable base URL of the Flux
+                  notification-controller webhook receiver endpoint (e.g.
+                  https://flux-webhook.example.com), used by ForgejoWebhook to combine
+                  with a referenced Receiver's status.webhookPath into the full webhook
+                  URL registered on this instance. Required for any ForgejoWebhook
+                  targeting this instance to reconcile successfully.
+                type: string
               defaultPullKeySecretRef:
                 description: |-
                   DefaultPullKeySecretRef references the Secret holding a shared SSH
