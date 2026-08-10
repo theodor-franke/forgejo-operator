@@ -1,13 +1,6 @@
-## This is a deliberately minimal chart: no leader-election (single replica
-## only), no Prometheus ServiceMonitor, no NetworkPolicies. cert-manager is a
-## hard requirement, not a toggle — the webhook has no other supported way to
-## get its TLS certificate. See CLAUDE.md's "Distribution" section for why.
-
 manager:
   image:
-    repository: controller
-    ## Defaults to .Chart.AppVersion if unset.
-    tag: ""
+    repository: ghcr.io/theodor-franke/forgejo-operator
     pullPolicy: IfNotPresent
 
   resources:
@@ -18,9 +11,6 @@ manager:
       cpu: 10m
       memory: 64Mi
 
-## Metrics endpoint port. Always served over HTTPS with per-request
-## SubjectAccessReview authorization (matches cmd/main.go's --metrics-secure
-## default of true; there is no insecure-mode toggle here).
 metrics:
   port: 8443
 

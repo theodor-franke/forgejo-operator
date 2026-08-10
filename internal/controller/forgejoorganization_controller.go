@@ -105,6 +105,12 @@ const ownersTeamName = "Owners"
 
 const teamAccessModeAdmin = "admin"
 
+// teamPermissionPlaceholder is sent as the non-admin "permission" value
+// whenever a team's units_map is what actually carries the per-feature
+// access; Forgejo requires a non-"admin" permission to accompany units_map
+// at all (see the client.go gotcha note), but ignores the exact value.
+const teamPermissionPlaceholder = "read"
+
 // teamAccessArgs translates a Team's AccessMode/RepoPermissions into the
 // (permission, unitsMap) pair forgejoapi's team CRUD calls expect.
 //
@@ -118,7 +124,7 @@ func teamAccessArgs(team forgejoschrankedev1alpha1.Team) (permission string, uni
 	if team.AccessMode == teamAccessModeAdmin {
 		return teamAccessModeAdmin, nil
 	}
-	return "read", map[string]string{
+	return teamPermissionPlaceholder, map[string]string{
 		forgejoapi.UnitCode:         accessLevel(team.RepoPermissions.Code),
 		forgejoapi.UnitIssues:       accessLevel(team.RepoPermissions.Issues),
 		forgejoapi.UnitPullRequests: accessLevel(team.RepoPermissions.PullRequests),
