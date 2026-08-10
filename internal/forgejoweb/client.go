@@ -122,16 +122,21 @@ func (c *Client) ensureLoggedIn(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("forgejo web: parsing login page: %w", err)
 	}
-	csrf, ok := findCSRFToken(doc)
-	if !ok {
-		return errors.New("forgejo web: login page did not contain a CSRF token")
-	}
-
-	loginResp, err := c.postForm(ctx, "/user/login", url.Values{
-		"_csrf":     {csrf},
+	// Forgejo's login form does not always carry a CSRF token: newer
+	// versions (verified against 15.0.6, gitea 1.22 base) no longer embed
+	// one, since login CSRF is a different, less severe threat class than
+	// CSRF against an already-authenticated session. Include it when
+	// present (older versions, e.g. the forgejo:10 test image, still
+	// require it) and omit it otherwise.
+	values := url.Values{
 		"user_name": {c.username},
 		"password":  {c.password},
-	})
+	}
+	if csrf, ok := findCSRFToken(doc); ok {
+		values.Set("_csrf", csrf)
+	}
+
+	loginResp, err := c.postForm(ctx, "/user/login", values)
 	if err != nil {
 		return err
 	}

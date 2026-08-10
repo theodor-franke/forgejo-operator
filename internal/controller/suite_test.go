@@ -53,7 +53,7 @@ import (
 // they exercise the actual Forgejo REST API.
 
 const (
-	forgejoImage         = "codeberg.org/forgejo/forgejo:10"
+	forgejoImage         = "codeberg.org/forgejo/forgejo:15"
 	forgejoAdminUsername = "operator-admin"
 	forgejoAdminPassword = "OperatorTest123!"
 	forgejoAdminEmail    = "operator-admin@example.com"

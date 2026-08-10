@@ -25,4 +25,4 @@ spec:
       accessMode: admin
       canCreateOrgRepo: true
       groups:
-        - its-circle-plattformautomatisierung
+        - plattform-operators
