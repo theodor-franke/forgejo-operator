@@ -180,6 +180,94 @@ var _ = Describe("ForgejoOrganization Controller", func() {
 			Expect(org.RepoAdminChangeTeamAccess).To(BeFalse())
 		})
 
+		It("adopts an organization that already exists on the server before the CR is created", func() {
+			By("creating the organization directly on the server, out of band from the operator")
+			_, err := directClient.CreateOrg(ctx, forgejoapi.CreateOrgOptions{
+				Name:       resourceName,
+				Visibility: "public",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating a ForgejoOrganization CR for the pre-existing organization and reconciling")
+			resource := &forgejoschrankedev1alpha1.ForgejoOrganization{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				Spec: forgejoschrankedev1alpha1.ForgejoOrganizationSpec{
+					InstanceRef:           forgejoschrankedev1alpha1.InstanceRef{Name: instanceName},
+					Visibility:            "public",
+					AdminPermissionRights: true,
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking the CR was adopted: finalizer set and Ready status, not an error from a failed create")
+			updated := &forgejoschrankedev1alpha1.ForgejoOrganization{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
+			Expect(controllerutil.ContainsFinalizer(updated, organizationFinalizer)).To(BeTrue())
+			Expect(updated.Status.Status).To(Equal("Ready"))
+
+			By("checking the spec was actually applied to the pre-existing organization")
+			org, err := directClient.GetOrg(ctx, resourceName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(org.Name).To(Equal(resourceName))
+			Expect(org.RepoAdminChangeTeamAccess).To(BeTrue())
+		})
+
+		It("adopts pre-existing teams on an already-existing organization, applying the requested permissions", func() {
+			By("creating the organization and a team directly on the server, out of band from the operator")
+			_, err := directClient.CreateOrg(ctx, forgejoapi.CreateOrgOptions{
+				Name:       resourceName,
+				Visibility: "public",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = directClient.CreateTeam(ctx, resourceName, forgejoapi.CreateTeamOptions{
+				Name:       "developer",
+				Permission: "read",
+				UnitsMap:   map[string]string{forgejoapi.UnitCode: "read"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating a ForgejoOrganization CR that also declares that team with different permissions")
+			resource := &forgejoschrankedev1alpha1.ForgejoOrganization{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				Spec: forgejoschrankedev1alpha1.ForgejoOrganizationSpec{
+					InstanceRef: forgejoschrankedev1alpha1.InstanceRef{Name: instanceName},
+					Visibility:  "public",
+					Teams: []forgejoschrankedev1alpha1.Team{
+						{
+							Name:   "developer",
+							Groups: []string{"projects-dev"},
+							RepoPermissions: forgejoschrankedev1alpha1.RepoPermissions{
+								Code:   "write",
+								Issues: "write",
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &forgejoschrankedev1alpha1.ForgejoOrganization{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
+			Expect(updated.Status.Status).To(Equal("Ready"))
+
+			By("checking the pre-existing team was edited (not duplicated) with the requested permissions")
+			teams, err := directClient.ListTeams(ctx, resourceName)
+			Expect(err).NotTo(HaveOccurred())
+			var developerTeams []forgejoapi.Team
+			for _, t := range teams {
+				if t.Name == "developer" {
+					developerTeams = append(developerTeams, t)
+				}
+			}
+			Expect(developerTeams).To(HaveLen(1))
+			Expect(developerTeams[0].UnitsMap).To(HaveKeyWithValue(forgejoapi.UnitCode, "write"))
+			Expect(developerTeams[0].UnitsMap).To(HaveKeyWithValue(forgejoapi.UnitIssues, "write"))
+		})
+
 		It("reports an Error status when the referenced Forgejo instance does not exist", func() {
 			resource := &forgejoschrankedev1alpha1.ForgejoOrganization{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},

@@ -211,6 +211,42 @@ var _ = Describe("ForgejoRepository Controller", func() {
 			Expect(repo.Template).To(BeTrue())
 		})
 
+		It("adopts a repository that already exists on the server before the CR is created", func() {
+			By("creating the repository directly on the server, out of band from the operator")
+			_, err := directClient.CreateOrgRepo(ctx, orgName, forgejoapi.CreateRepoOptions{
+				Name:        resourceName,
+				Description: "created outside the operator",
+				Private:     false,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating a ForgejoRepository CR for the pre-existing repository and reconciling")
+			resource := &forgejoschrankedev1alpha1.ForgejoRepository{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				Spec: forgejoschrankedev1alpha1.ForgejoRepositorySpec{
+					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: orgName},
+					Description:     "adopted by the operator",
+					Private:         true,
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking the CR was adopted: finalizer set and Ready status, not an error from a failed create")
+			updated := &forgejoschrankedev1alpha1.ForgejoRepository{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
+			Expect(controllerutil.ContainsFinalizer(updated, repositoryFinalizer)).To(BeTrue())
+			Expect(updated.Status.Status).To(Equal("Ready"))
+
+			By("checking the spec was actually applied to the pre-existing repository")
+			repo, err := directClient.GetRepo(ctx, orgName, resourceName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(repo.Name).To(Equal(resourceName))
+			Expect(repo.Description).To(Equal("adopted by the operator"))
+			Expect(repo.Private).To(BeTrue())
+		})
+
 		It("reports an Error status when the referenced ForgejoOrganization does not exist", func() {
 			resource := &forgejoschrankedev1alpha1.ForgejoRepository{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
