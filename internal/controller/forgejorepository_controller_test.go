@@ -418,7 +418,7 @@ var _ = Describe("ForgejoRepository Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(keys).To(HaveLen(1))
 			Expect(keys[0].ReadOnly).To(BeTrue())
-			Expect(keys[0].Key).To(Equal(strings.TrimSpace(string(pullKeySecret.Data["publicKey"]))))
+			Expect(keys[0].Key).To(Equal(strings.TrimSpace(string(pullKeySecret.Data["identity.pub"]))))
 
 			By("reconciling again and checking the key isn't duplicated")
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})

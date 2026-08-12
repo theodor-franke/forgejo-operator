@@ -38,11 +38,10 @@ type ForgejoSpec struct {
 	// every ForgejoRepository targeting this instance (a repository can opt
 	// out via its own spec.optOutDefaultPullKey). If the Secret does not
 	// already exist, the operator generates a new ed25519 keypair and
-	// creates it, with keys "publicKey" and "identity.pub" (both the same
-	// OpenSSH authorized_keys format public key), "identity" (OpenSSH PEM
-	// format private key), and "known_hosts" (this instance's SSH host key,
-	// discovered via SSHHost/SSHPort, in known_hosts format). The
-	// "identity"/"identity.pub"/"known_hosts" keys match Flux's
+	// creates it, with keys "identity.pub" (OpenSSH authorized_keys format
+	// public key), "identity" (OpenSSH PEM format private key), and
+	// "known_hosts" (this instance's SSH host key, discovered via
+	// SSHHost/SSHPort, in known_hosts format). These three keys match Flux's
 	// GitRepository SSH auth secretRef convention, so this Secret can be
 	// referenced directly from a GitRepository's spec.secretRef.
 	// Leave unset to not manage a default pull key for this instance.
