@@ -183,8 +183,9 @@ var _ = Describe("Forgejo Controller", func() {
 			pullKeySecret := &corev1.Secret{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pullKeySecretName, Namespace: "default"}, pullKeySecret)).To(Succeed())
 			Expect(string(pullKeySecret.Data["publicKey"])).To(HavePrefix("ssh-ed25519 "))
-			Expect(string(pullKeySecret.Data["privateKey"])).To(ContainSubstring("BEGIN OPENSSH PRIVATE KEY"))
-			Expect(string(pullKeySecret.Data["knownHosts"])).To(ContainSubstring(forgejoSSHHost))
+			Expect(string(pullKeySecret.Data["identity.pub"])).To(Equal(string(pullKeySecret.Data["publicKey"])))
+			Expect(string(pullKeySecret.Data["identity"])).To(ContainSubstring("BEGIN OPENSSH PRIVATE KEY"))
+			Expect(string(pullKeySecret.Data["known_hosts"])).To(ContainSubstring(forgejoSSHHost))
 
 			By("reconciling again and checking the existing secret is left untouched")
 			firstResourceVersion := pullKeySecret.ResourceVersion

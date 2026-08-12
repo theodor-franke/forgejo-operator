@@ -33,9 +33,14 @@ import (
 
 const (
 	// Keys used in the Secret referenced by Forgejo.Spec.DefaultPullKeySecretRef.
-	pullKeySecretPublicKeyField  = "publicKey"
-	pullKeySecretPrivateKeyField = "privateKey"
-	pullKeySecretKnownHostsField = "knownHosts"
+	// publicKey is read back by reconcileDefaultPullKey below to upload as a
+	// repo deploy key; the other three match Flux's GitRepository SSH auth
+	// secretRef convention (https://fluxcd.io/flux/components/source/gitrepositories/#ssh-authentication)
+	// so the same Secret can be used directly as a Flux secretRef.
+	pullKeySecretPublicKeyField     = "publicKey"
+	pullKeySecretPrivateKeyField    = "identity"
+	pullKeySecretPublicKeyFluxField = "identity.pub"
+	pullKeySecretKnownHostsField    = "known_hosts"
 
 	// defaultSSHPort is used when Forgejo.Spec.SSHPort is unset.
 	defaultSSHPort = 22
@@ -82,9 +87,10 @@ func ensureDefaultPullKeySecret(ctx context.Context, c client.Client, instance *
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: ref.SecretName, Namespace: ref.SecretNamespace},
 		StringData: map[string]string{
-			pullKeySecretPublicKeyField:  pair.PublicKey,
-			pullKeySecretPrivateKeyField: pair.PrivateKey,
-			pullKeySecretKnownHostsField: knownHosts,
+			pullKeySecretPublicKeyField:     pair.PublicKey,
+			pullKeySecretPrivateKeyField:    pair.PrivateKey,
+			pullKeySecretPublicKeyFluxField: pair.PublicKey,
+			pullKeySecretKnownHostsField:    knownHosts,
 		},
 	}
 	if err := c.Create(ctx, secret); err != nil {
