@@ -138,7 +138,7 @@ var _ = Describe("ForgejoRunner Controller", func() {
 			resource := &forgejoschrankedev1alpha1.ForgejoRunner{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
 				Spec: forgejoschrankedev1alpha1.ForgejoRunnerSpec{
-					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: orgName},
+					OrganizationRef: forgejoschrankedev1alpha1.RunnerOrganizationRef{Name: orgName},
 					Labels:          []string{"docker:docker://node:22-bookworm"},
 				},
 			}
@@ -186,7 +186,7 @@ var _ = Describe("ForgejoRunner Controller", func() {
 			resource := &forgejoschrankedev1alpha1.ForgejoRunner{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
 				Spec: forgejoschrankedev1alpha1.ForgejoRunnerSpec{
-					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: orgName},
+					OrganizationRef: forgejoschrankedev1alpha1.RunnerOrganizationRef{Name: orgName},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -209,7 +209,7 @@ var _ = Describe("ForgejoRunner Controller", func() {
 			resource := &forgejoschrankedev1alpha1.ForgejoRunner{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
 				Spec: forgejoschrankedev1alpha1.ForgejoRunnerSpec{
-					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: orgName},
+					OrganizationRef: forgejoschrankedev1alpha1.RunnerOrganizationRef{Name: orgName},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -232,7 +232,7 @@ var _ = Describe("ForgejoRunner Controller", func() {
 			resource := &forgejoschrankedev1alpha1.ForgejoRunner{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
 				Spec: forgejoschrankedev1alpha1.ForgejoRunnerSpec{
-					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: "does-not-exist"},
+					OrganizationRef: forgejoschrankedev1alpha1.RunnerOrganizationRef{Name: "does-not-exist"},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -247,11 +247,52 @@ var _ = Describe("ForgejoRunner Controller", func() {
 			Expect(controllerutil.ContainsFinalizer(updated, runnerFinalizer)).To(BeTrue())
 		})
 
+		It("resolves the organization across namespaces when organizationRef.namespace is set", func() {
+			const runnerNamespace = "ci-runners"
+			_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: runnerNamespace}})
+
+			crossNamespacedName := types.NamespacedName{Namespace: runnerNamespace, Name: resourceName}
+			resource := &forgejoschrankedev1alpha1.ForgejoRunner{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: runnerNamespace},
+				Spec: forgejoschrankedev1alpha1.ForgejoRunnerSpec{
+					OrganizationRef: forgejoschrankedev1alpha1.RunnerOrganizationRef{Name: orgName, Namespace: "default"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: crossNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking the CR itself, and its owned Secret/Deployment, all live in the runner's own namespace")
+			updated := &forgejoschrankedev1alpha1.ForgejoRunner{}
+			Expect(k8sClient.Get(ctx, crossNamespacedName, updated)).To(Succeed())
+			Expect(updated.Status.Status).To(Equal("Ready"))
+			Expect(updated.Status.RunnerID).NotTo(BeZero())
+
+			secret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, crossNamespacedName, secret)).To(Succeed())
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, crossNamespacedName, deployment)).To(Succeed())
+
+			By("checking the runner really exists on the Forgejo server, registered under the cross-namespace organization")
+			runner, err := directClient.GetOrgRunner(ctx, orgName, updated.Status.RunnerID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(runner.Name).To(Equal(resourceName))
+
+			By("deleting the CR, which only sets a deletion timestamp because of the finalizer")
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: crossNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = directClient.GetOrgRunner(ctx, orgName, updated.Status.RunnerID)
+			Expect(errors.Is(err, forgejoapi.ErrNotFound)).To(BeTrue())
+		})
+
 		It("deregisters the real runner from Forgejo when the CR is deleted", func() {
 			resource := &forgejoschrankedev1alpha1.ForgejoRunner{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
 				Spec: forgejoschrankedev1alpha1.ForgejoRunnerSpec{
-					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: orgName},
+					OrganizationRef: forgejoschrankedev1alpha1.RunnerOrganizationRef{Name: orgName},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())

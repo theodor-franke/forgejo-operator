@@ -72,9 +72,18 @@ spec:
                 description: |-
                   OrganizationRef references the ForgejoOrganization this runner is
                   registered against. The runner picks up Actions jobs from every
-                  repository in that organization.
+                  repository in that organization. Unlike OrganizationRef elsewhere in
+                  this API, this reference may cross namespaces: the runner's Secret and
+                  Deployment are owned by (and always live in the same namespace as) the
+                  ForgejoRunner CR itself, so letting the org lookup cross namespaces --
+                  rather than the runner's own workload -- lets a ForgejoRunner be
+                  created in a dedicated namespace (e.g. one with a privileged Pod
+                  Security admission level, for the dind sidecar) without also having to
+                  move its ForgejoOrganization there.
                 properties:
                   name:
+                    type: string
+                  namespace:
                     type: string
                 required:
                 - name

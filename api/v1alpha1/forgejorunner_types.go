@@ -25,8 +25,15 @@ import (
 type ForgejoRunnerSpec struct {
 	// OrganizationRef references the ForgejoOrganization this runner is
 	// registered against. The runner picks up Actions jobs from every
-	// repository in that organization.
-	OrganizationRef OrganizationRef `json:"organizationRef"`
+	// repository in that organization. Unlike OrganizationRef elsewhere in
+	// this API, this reference may cross namespaces: the runner's Secret and
+	// Deployment are owned by (and always live in the same namespace as) the
+	// ForgejoRunner CR itself, so letting the org lookup cross namespaces --
+	// rather than the runner's own workload -- lets a ForgejoRunner be
+	// created in a dedicated namespace (e.g. one with a privileged Pod
+	// Security admission level, for the dind sidecar) without also having to
+	// move its ForgejoOrganization there.
+	OrganizationRef RunnerOrganizationRef `json:"organizationRef"`
 
 	// Replicas is the number of runner pods to run. All replicas share the
 	// same registration (Forgejo allows many runner processes to poll with
@@ -59,6 +66,16 @@ type ForgejoRunnerSpec struct {
 	// Resources sets compute resource requirements for the runner container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// RunnerOrganizationRef references a ForgejoOrganization by name, optionally
+// in a different namespace than the object doing the referencing. Namespace
+// defaults to that object's own namespace when unset.
+type RunnerOrganizationRef struct {
+	Name string `json:"name"`
+
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // ForgejoRunnerStatus defines the observed state of ForgejoRunner.

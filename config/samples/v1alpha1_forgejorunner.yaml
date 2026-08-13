@@ -9,6 +9,7 @@ metadata:
 spec:
   organizationRef:
     name: forgejoorganization-sample
+    # namespace: other-namespace # optional, defaults to this object's own namespace
   replicas: 1
   labels:
     - "docker:docker://node:22-bookworm"

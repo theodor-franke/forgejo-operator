@@ -104,6 +104,17 @@ type runnerRegistrationFile struct {
 	Labels  []string `json:"labels"`
 }
 
+// runnerOrganizationNamespace returns the namespace runner's organizationRef
+// should be resolved in: the explicit namespace if set, otherwise runner's
+// own namespace, matching the same-namespace default used elsewhere in this
+// API.
+func runnerOrganizationNamespace(runner *forgejoschrankedev1alpha1.ForgejoRunner) string {
+	if ns := runner.Spec.OrganizationRef.Namespace; ns != "" {
+		return ns
+	}
+	return runner.Namespace
+}
+
 // ForgejoRunnerReconciler reconciles a ForgejoRunner object
 type ForgejoRunnerReconciler struct {
 	client.Client
@@ -141,7 +152,7 @@ func (r *ForgejoRunnerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
-	org, err := resolveOrganization(ctx, r.Client, runner.Namespace, runner.Spec.OrganizationRef.Name)
+	org, err := resolveOrganization(ctx, r.Client, runnerOrganizationNamespace(runner), runner.Spec.OrganizationRef.Name)
 	if err != nil {
 		log.Error(err, "unable to resolve ForgejoOrganization", "organization", runner.Spec.OrganizationRef.Name)
 		return r.setStatus(ctx, runner, statusError, err.Error())
@@ -377,7 +388,7 @@ func (r *ForgejoRunnerReconciler) reconcileDelete(ctx context.Context, runner *f
 	}
 
 	if runner.Status.RunnerID != 0 {
-		org, err := resolveOrganization(ctx, r.Client, runner.Namespace, runner.Spec.OrganizationRef.Name)
+		org, err := resolveOrganization(ctx, r.Client, runnerOrganizationNamespace(runner), runner.Spec.OrganizationRef.Name)
 		switch {
 		case apierrors.IsNotFound(err):
 			log.Info("ForgejoOrganization no longer exists, skipping remote runner cleanup",
