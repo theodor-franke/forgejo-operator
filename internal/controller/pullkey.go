@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -162,6 +163,20 @@ func reconcileDefaultPullKey(ctx context.Context, c client.Client, apiClient *fo
 	if err != nil {
 		return fmt.Errorf("reading default pull key: %w", err)
 	}
+	trimmedPublicKey := strings.TrimSpace(publicKey)
+
+	// Forgejo rejects (422) a deploy key whose content already exists on the
+	// repo, regardless of title - e.g. it was added under a different title
+	// before this repo came under operator management. Content, not title,
+	// is what Forgejo actually treats as unique, so check for that too
+	// before attempting to create: matching by title alone isn't enough to
+	// stay idempotent.
+	for i := range keys {
+		if keys[i].Key == trimmedPublicKey {
+			return nil
+		}
+	}
+
 	if _, err := apiClient.CreateDeployKey(ctx, owner, repoName, forgejoapi.CreateDeployKeyOptions{
 		Title:    defaultPullKeyTitle,
 		Key:      publicKey,
