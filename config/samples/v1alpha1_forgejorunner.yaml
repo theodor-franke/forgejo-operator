@@ -13,3 +13,14 @@ spec:
   replicas: 1
   labels:
     - "docker:docker://node:22-bookworm"
+  # resources, dindResources, and initResources each default to a fixed size
+  # sufficient for light CI workloads (see forgejorunner_controller.go), so
+  # every container has explicit requests/limits even under a strict
+  # ResourceQuota; override any of them here if defaults don't fit, e.g.:
+  # dindResources:
+  #   requests:
+  #     cpu: "1"
+  #     memory: 1Gi
+  #   limits:
+  #     cpu: "4"
+  #     memory: 4Gi

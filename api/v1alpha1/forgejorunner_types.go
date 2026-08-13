@@ -63,9 +63,31 @@ type ForgejoRunnerSpec struct {
 	// +optional
 	DindImage string `json:"dindImage,omitempty"`
 
-	// Resources sets compute resource requirements for the runner container.
+	// Resources sets compute resource requirements for the runner container,
+	// which only polls for jobs and orchestrates the dind sidecar -- it does
+	// not execute job steps itself. Defaults to a modest fixed size if unset,
+	// so the pod has explicit requests/limits on every container even under a
+	// cluster ResourceQuota that requires them.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// DindResources sets compute resource requirements for the
+	// Docker-in-Docker sidecar container, which is where job steps actually
+	// execute -- size this for the heaviest job this runner is expected to
+	// run. Defaults to a fixed size suitable for light CI workloads if unset,
+	// so the pod has explicit requests/limits on every container even under a
+	// cluster ResourceQuota that requires them.
+	// +optional
+	DindResources corev1.ResourceRequirements `json:"dindResources,omitempty"`
+
+	// InitResources sets compute resource requirements for the init
+	// container that copies the runner's registration file into place before
+	// the runner and dind containers start. Defaults to a small fixed size if
+	// unset, since this container only performs a single file copy, so the
+	// pod has explicit requests/limits on every container even under a
+	// cluster ResourceQuota that requires them.
+	// +optional
+	InitResources corev1.ResourceRequirements `json:"initResources,omitempty"`
 }
 
 // RunnerOrganizationRef references a ForgejoOrganization by name, optionally

@@ -24,6 +24,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -87,6 +88,62 @@ const (
 
 // defaultRunnerLabels is used when ForgejoRunner.Spec.Labels is unset.
 var defaultRunnerLabels = []string{"docker:docker://node:22-bookworm"}
+
+// Default compute resources applied per container when the corresponding
+// spec field is left unset, so every pod this controller creates has
+// explicit requests/limits on every container even under a cluster
+// ResourceQuota that requires them (a bare ResourceRequirements{} satisfies
+// no such quota). Sized for typical CI workloads; spec.resources/
+// spec.dindResources/spec.initResources override these per ForgejoRunner.
+var (
+	defaultRunnerContainerResources = corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("100m"),
+			corev1.ResourceMemory: resource.MustParse("128Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("500m"),
+			corev1.ResourceMemory: resource.MustParse("256Mi"),
+		},
+	}
+
+	// defaultDindResources is sized larger than the runner/init defaults
+	// since job steps execute inside this container -- raise via
+	// spec.dindResources for heavier jobs.
+	defaultDindResources = corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("250m"),
+			corev1.ResourceMemory: resource.MustParse("512Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("2"),
+			corev1.ResourceMemory: resource.MustParse("2Gi"),
+		},
+	}
+
+	defaultInitContainerResources = corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("10m"),
+			corev1.ResourceMemory: resource.MustParse("16Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("50m"),
+			corev1.ResourceMemory: resource.MustParse("32Mi"),
+		},
+	}
+)
+
+// resourcesOrDefault returns specified as-is if the caller set either
+// Requests or Limits on it, otherwise defaults. Requests/Limits are checked
+// together rather than merged field-by-field so that a caller who
+// deliberately sets only one of the two (e.g. Limits without Requests) gets
+// exactly that, not a mix of their value and the default's.
+func resourcesOrDefault(specified, defaults corev1.ResourceRequirements) corev1.ResourceRequirements {
+	if specified.Requests == nil && specified.Limits == nil {
+		return defaults
+	}
+	return specified
+}
 
 // runnerRegistrationFile is the JSON shape forgejo-runner's daemon command
 // reads from its working directory's ".runner" file (see the runner project:
@@ -294,6 +351,10 @@ func desiredRunnerDeploymentSpec(runner *forgejoschrankedev1alpha1.ForgejoRunner
 		dindImage = defaultDindImage
 	}
 
+	initResources := resourcesOrDefault(runner.Spec.InitResources, defaultInitContainerResources)
+	dindResources := resourcesOrDefault(runner.Spec.DindResources, defaultDindResources)
+	runnerResources := resourcesOrDefault(runner.Spec.Resources, defaultRunnerContainerResources)
+
 	podLabels := map[string]string{
 		"app.kubernetes.io/name":     "forgejo-runner",
 		"app.kubernetes.io/instance": runner.Name,
@@ -310,9 +371,10 @@ func desiredRunnerDeploymentSpec(runner *forgejoschrankedev1alpha1.ForgejoRunner
 			Spec: corev1.PodSpec{
 				InitContainers: []corev1.Container{
 					{
-						Name:    "copy-runner-registration",
-						Image:   image,
-						Command: []string{"sh", "-c", "cp /secret/" + runnerSecretKey + " " + runnerDataDir + "/" + runnerSecretKey},
+						Name:      "copy-runner-registration",
+						Image:     image,
+						Command:   []string{"sh", "-c", "cp /secret/" + runnerSecretKey + " " + runnerDataDir + "/" + runnerSecretKey},
+						Resources: initResources,
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: runnerSecretVolume, MountPath: "/secret", ReadOnly: true},
 							{Name: runnerDataVolume, MountPath: runnerDataDir},
@@ -321,8 +383,9 @@ func desiredRunnerDeploymentSpec(runner *forgejoschrankedev1alpha1.ForgejoRunner
 				},
 				Containers: []corev1.Container{
 					{
-						Name:  dindContainerName,
-						Image: dindImage,
+						Name:      dindContainerName,
+						Image:     dindImage,
+						Resources: dindResources,
 						SecurityContext: &corev1.SecurityContext{
 							Privileged: &privileged,
 						},
@@ -343,7 +406,7 @@ func desiredRunnerDeploymentSpec(runner *forgejoschrankedev1alpha1.ForgejoRunner
 						Command: []string{"sh", "-c",
 							"until [ -f " + dindClientCertDir + "/cert.pem ]; do sleep 1; done; exec forgejo-runner daemon"},
 						WorkingDir: runnerDataDir,
-						Resources:  runner.Spec.Resources,
+						Resources:  runnerResources,
 						Env: []corev1.EnvVar{
 							{Name: "DOCKER_HOST", Value: dockerHost},
 							{Name: "DOCKER_CERT_PATH", Value: dindClientCertDir},
