@@ -20,8 +20,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,6 +33,7 @@ import (
 
 	forgejoschrankedev1alpha1 "github.com/theodor-franke/forgejo-operator/api/v1alpha1"
 	"github.com/theodor-franke/forgejo-operator/internal/forgejoapi"
+	"github.com/theodor-franke/forgejo-operator/internal/sshkey"
 )
 
 // repositoryFinalizer is set on every ForgejoRepository so the operator can
@@ -48,7 +52,7 @@ type ForgejoRepositoryReconciler struct {
 // +kubebuilder:rbac:groups=forgejo.schranke.de,resources=forgejorepositories/finalizers,verbs=update
 // +kubebuilder:rbac:groups=forgejo.schranke.de,resources=forgejoorganizations,verbs=get;list;watch
 // +kubebuilder:rbac:groups=forgejo.schranke.de,resources=forgejoes,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;delete
 
 // Reconcile creates (and keeps in sync) a repository on the organization
 // referenced by spec.organizationRef. The repository's name on Forgejo is
@@ -100,7 +104,157 @@ func (r *ForgejoRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return r.setStatus(ctx, repo, statusError, err.Error())
 	}
 
+	if err := r.reconcileDeployKeyState(ctx, apiClient, instance, org.Name, repo); err != nil {
+		log.Error(err, "unable to reconcile repo-scoped deploy key")
+		return r.setStatus(ctx, repo, statusError, err.Error())
+	}
+
 	return r.setStatus(ctx, repo, statusReady, "")
+}
+
+// reconcileDeployKeyState provisions or removes repo's repo-scoped deploy
+// key per spec.deployKey, keeping status.deployKeyID/status.deployKeySecretName
+// in sync so both directions of the enabled/disabled transition are
+// idempotent.
+func (r *ForgejoRepositoryReconciler) reconcileDeployKeyState(ctx context.Context, apiClient *forgejoapi.Client, instance *forgejoschrankedev1alpha1.Forgejo, owner string, repo *forgejoschrankedev1alpha1.ForgejoRepository) error {
+	if repo.Spec.DeployKey != nil && repo.Spec.DeployKey.Enabled {
+		secretName := deployKeySecretName(repo)
+		id, err := r.reconcileDeployKey(ctx, apiClient, instance, owner, repo, secretName)
+		if err != nil {
+			return err
+		}
+		repo.Status.DeployKeyID = id
+		repo.Status.DeployKeySecretName = secretName
+		return nil
+	}
+
+	if repo.Status.DeployKeyID == 0 {
+		return nil
+	}
+
+	// spec.deployKey was disabled after being enabled (or removed
+	// entirely): revoke the repo-scoped key and remove its Secret rather
+	// than leaving a live, unused credential behind.
+	if err := apiClient.DeleteDeployKey(ctx, owner, repo.Name, repo.Status.DeployKeyID); err != nil {
+		return fmt.Errorf("removing disabled repo-scoped deploy key: %w", err)
+	}
+
+	secretName := repo.Status.DeployKeySecretName
+	if secretName == "" {
+		secretName = deployKeySecretName(repo)
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: repo.Namespace}}
+	if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("removing disabled repo-scoped deploy key secret %s/%s: %w", repo.Namespace, secretName, err)
+	}
+
+	repo.Status.DeployKeyID = 0
+	repo.Status.DeployKeySecretName = ""
+	return nil
+}
+
+// deployKeySecretName returns the name spec.deployKey's Secret should be
+// created/looked up under: an explicit spec.deployKey.secretName if set,
+// otherwise "<repository-name>-deploy-key".
+func deployKeySecretName(repo *forgejoschrankedev1alpha1.ForgejoRepository) string {
+	if repo.Spec.DeployKey != nil && repo.Spec.DeployKey.SecretName != "" {
+		return repo.Spec.DeployKey.SecretName
+	}
+	return repo.Name + "-deploy-key"
+}
+
+// deployKeyTitle identifies a repo-scoped deploy key on Forgejo, so it can
+// be found again by listing (e.g. after an operator restart before
+// status.deployKeyID was persisted) instead of relying solely on local
+// state.
+func deployKeyTitle(namespace string) string {
+	return "flux-" + namespace
+}
+
+// reconcileDeployKey ensures repo has a read-only, repo-scoped SSH deploy
+// key registered on Forgejo, generating and publishing a new keypair as a
+// Secret named secretName in repo's own namespace if one doesn't already
+// exist. It returns the deploy key's Forgejo-side ID.
+func (r *ForgejoRepositoryReconciler) reconcileDeployKey(ctx context.Context, apiClient *forgejoapi.Client, instance *forgejoschrankedev1alpha1.Forgejo, owner string, repo *forgejoschrankedev1alpha1.ForgejoRepository, secretName string) (int64, error) {
+	getErr := r.Get(ctx, client.ObjectKey{Name: secretName, Namespace: repo.Namespace}, &corev1.Secret{})
+	var publicKey string
+	switch {
+	case getErr == nil:
+		key, err := fetchSecretKey(ctx, r.Client, repo.Namespace, secretName, pullKeySecretPublicKeyField)
+		if err != nil {
+			return 0, err
+		}
+		publicKey = key
+	case apierrors.IsNotFound(getErr):
+		key, err := r.createDeployKeySecret(ctx, instance, repo, secretName)
+		if err != nil {
+			return 0, err
+		}
+		publicKey = key
+	default:
+		return 0, fmt.Errorf("getting deploy key secret %s/%s: %w", repo.Namespace, secretName, getErr)
+	}
+	publicKey = strings.TrimSpace(publicKey)
+
+	keys, err := apiClient.ListDeployKeys(ctx, owner, repo.Name)
+	if err != nil {
+		return 0, fmt.Errorf("listing deploy keys: %w", err)
+	}
+
+	title := deployKeyTitle(repo.Namespace)
+	for i := range keys {
+		if keys[i].Title == title || keys[i].Key == publicKey {
+			return keys[i].ID, nil
+		}
+	}
+
+	created, err := apiClient.CreateDeployKey(ctx, owner, repo.Name, forgejoapi.CreateDeployKeyOptions{
+		Title:    title,
+		Key:      publicKey,
+		ReadOnly: true,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("adding repo-scoped deploy key: %w", err)
+	}
+	return created.ID, nil
+}
+
+// createDeployKeySecret generates a new ed25519 deploy-key pair and
+// discovers instance's SSH host key, then creates the Secret spec.deployKey
+// publishes it as, owned by repo so ordinary Kubernetes garbage collection
+// removes it when the ForgejoRepository is deleted. Returns the generated
+// public key.
+func (r *ForgejoRepositoryReconciler) createDeployKeySecret(ctx context.Context, instance *forgejoschrankedev1alpha1.Forgejo, repo *forgejoschrankedev1alpha1.ForgejoRepository, secretName string) (string, error) {
+	host, port, err := sshHostPort(instance)
+	if err != nil {
+		return "", err
+	}
+
+	pair, err := sshkey.Generate(fmt.Sprintf("%s/%s", repo.Namespace, repo.Name))
+	if err != nil {
+		return "", fmt.Errorf("generating repo-scoped deploy key: %w", err)
+	}
+
+	knownHosts, err := sshkey.ScanHostKey(ctx, host, port)
+	if err != nil {
+		return "", fmt.Errorf("discovering SSH host key for %s:%d: %w", host, port, err)
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: repo.Namespace},
+		StringData: map[string]string{
+			pullKeySecretPublicKeyField:  pair.PublicKey,
+			pullKeySecretPrivateKeyField: pair.PrivateKey,
+			pullKeySecretKnownHostsField: knownHosts,
+		},
+	}
+	if err := controllerutil.SetControllerReference(repo, secret, r.Scheme); err != nil {
+		return "", fmt.Errorf("setting owner reference on deploy key secret: %w", err)
+	}
+	if err := r.Create(ctx, secret); err != nil {
+		return "", fmt.Errorf("creating deploy key secret %s/%s: %w", repo.Namespace, secretName, err)
+	}
+	return pair.PublicKey, nil
 }
 
 // reconcileRemoteRepo creates the repository on the Forgejo instance if it
@@ -163,6 +317,11 @@ func (r *ForgejoRepositoryReconciler) reconcileDelete(ctx context.Context, repo 
 			if err != nil {
 				return ctrl.Result{}, err
 			}
+			if repo.Status.DeployKeyID != 0 {
+				if err := apiClient.DeleteDeployKey(ctx, org.Name, repo.Name, repo.Status.DeployKeyID); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
 			if err := apiClient.DeleteRepo(ctx, org.Name, repo.Name); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -192,6 +351,7 @@ func (r *ForgejoRepositoryReconciler) setStatus(ctx context.Context, repo *forge
 func (r *ForgejoRepositoryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&forgejoschrankedev1alpha1.ForgejoRepository{}).
+		Owns(&corev1.Secret{}).
 		Named("forgejorepository").
 		Complete(r)
 }

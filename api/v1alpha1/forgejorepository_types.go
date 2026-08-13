@@ -58,6 +58,33 @@ type ForgejoRepositorySpec struct {
 	// repository. Has no effect if the instance doesn't have one configured.
 	// +optional
 	OptOutDefaultPullKey bool `json:"optOutDefaultPullKey,omitempty"`
+
+	// DeployKey provisions a read-only, repo-scoped SSH deploy key and
+	// publishes it as a Secret in this repository's own namespace, for
+	// use as a Flux GitRepository's spec.secretRef (which only supports
+	// same-namespace secrets). Defaults to disabled for backward compat.
+	// +optional
+	DeployKey *DeployKeySpec `json:"deployKey,omitempty"`
+}
+
+// DeployKeySpec configures automatic provisioning of a read-only,
+// single-repo-scoped SSH deploy key, published as a Secret in the
+// referencing ForgejoRepository's own namespace. Unlike
+// Forgejo.spec.defaultPullKeySecretRef's shared, org-wide key, this key can
+// only ever read the one repository it was created for, so publishing it as
+// a same-namespace Secret costs nothing even in a multi-tenant cluster.
+type DeployKeySpec struct {
+	// Enabled provisions the deploy key and Secret when true.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// SecretName overrides the generated Secret's name. Defaults to
+	// "<repository-name>-deploy-key" when unset. The Secret carries the
+	// same "identity"/"identity.pub"/"known_hosts" keys as
+	// Forgejo.spec.defaultPullKeySecretRef's Secret (Flux's GitRepository
+	// SSH auth secretRef convention).
+	// +optional
+	SecretName string `json:"secretName,omitempty"`
 }
 
 // ForgejoRepositoryStatus defines the observed state of ForgejoRepository.
@@ -71,6 +98,20 @@ type ForgejoRepositoryStatus struct {
 	// the last error encountered while talking to the Forgejo instance.
 	// +optional
 	Message string `json:"message,omitempty"`
+
+	// DeployKeyID is the ID of the repo-scoped deploy key on the Forgejo
+	// repository created for spec.deployKey, so it can be targeted
+	// precisely for removal when spec.deployKey is disabled or the
+	// ForgejoRepository is deleted.
+	// +optional
+	DeployKeyID int64 `json:"deployKeyID,omitempty"`
+
+	// DeployKeySecretName is the name of the Secret spec.deployKey last
+	// published the provisioned SSH keypair as, so it can still be found
+	// and removed if spec.deployKey.secretName changes or spec.deployKey is
+	// removed entirely.
+	// +optional
+	DeployKeySecretName string `json:"deployKeySecretName,omitempty"`
 }
 
 // +kubebuilder:object:root=true

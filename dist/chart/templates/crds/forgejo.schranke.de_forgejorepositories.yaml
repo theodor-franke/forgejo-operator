@@ -1,4 +1,5 @@
 ---
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -52,6 +53,26 @@ spec:
                   DefaultBranch sets the repository's default branch. On creation it
                   only takes effect when AutoInit is true.
                 type: string
+              deployKey:
+                description: |-
+                  DeployKey provisions a read-only, repo-scoped SSH deploy key and
+                  publishes it as a Secret in this repository's own namespace, for
+                  use as a Flux GitRepository's spec.secretRef (which only supports
+                  same-namespace secrets). Defaults to disabled for backward compat.
+                properties:
+                  enabled:
+                    description: Enabled provisions the deploy key and Secret when
+                      true.
+                    type: boolean
+                  secretName:
+                    description: |-
+                      SecretName overrides the generated Secret's name. Defaults to
+                      "<repository-name>-deploy-key" when unset. The Secret carries the
+                      same "identity"/"identity.pub"/"known_hosts" keys as
+                      Forgejo.spec.defaultPullKeySecretRef's Secret (Flux's GitRepository
+                      SSH auth secretRef convention).
+                    type: string
+                type: object
               description:
                 description: Description is shown on the repository's page in Forgejo.
                 type: string
@@ -90,6 +111,21 @@ spec:
           status:
             description: ForgejoRepositoryStatus defines the observed state of ForgejoRepository.
             properties:
+              deployKeyID:
+                description: |-
+                  DeployKeyID is the ID of the repo-scoped deploy key on the Forgejo
+                  repository created for spec.deployKey, so it can be targeted
+                  precisely for removal when spec.deployKey is disabled or the
+                  ForgejoRepository is deleted.
+                format: int64
+                type: integer
+              deployKeySecretName:
+                description: |-
+                  DeployKeySecretName is the name of the Secret spec.deployKey last
+                  published the provisioned SSH keypair as, so it can still be found
+                  and removed if spec.deployKey.secretName changes or spec.deployKey is
+                  removed entirely.
+                type: string
               message:
                 description: |-
                   Message contains additional detail when Status is not "Ready", such as

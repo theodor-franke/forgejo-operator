@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -492,6 +493,229 @@ var _ = Describe("ForgejoRepository Controller", func() {
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hasDefaultPullKey()).To(BeFalse())
+		})
+	})
+
+	Context("When a ForgejoRepository has spec.deployKey enabled", func() {
+		const instanceName = "forgejo-repository-deploykey-test-instance"
+		const authSecretName = "forgejo-repository-deploykey-test-creds"
+		const orgName = "repository-deploykey-org"
+		const resourceName = "webapp"
+		const deployKeySecretName = "webapp-deploy-key"
+
+		ctx := context.Background()
+		typeNamespacedName := types.NamespacedName{Namespace: "default", Name: resourceName}
+
+		var (
+			controllerReconciler *ForgejoRepositoryReconciler
+			directClient         *forgejoapi.Client
+		)
+
+		BeforeEach(func() {
+			controllerReconciler = &ForgejoRepositoryReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			directClient = forgejoapi.New(forgejoBaseURL, forgejoAdminUsername, forgejoAdminPassword)
+
+			authSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: authSecretName, Namespace: "default"},
+				StringData: map[string]string{
+					"username": forgejoAdminUsername,
+					"password": forgejoAdminPassword,
+				},
+			}
+			Expect(k8sClient.Create(ctx, authSecret)).To(Succeed())
+
+			By("creating the Forgejo instance (no default pull key configured)")
+			instance := &forgejoschrankedev1alpha1.Forgejo{
+				ObjectMeta: metav1.ObjectMeta{Name: instanceName},
+				Spec: forgejoschrankedev1alpha1.ForgejoSpec{
+					Url: forgejoBaseURL,
+					AuthSecretRef: forgejoschrankedev1alpha1.AuthSecretRef{
+						SecretName:      authSecretName,
+						SecretNamespace: "default",
+						UsernameKey:     "username",
+						PasswordKey:     "password",
+					},
+					SSHHost: forgejoSSHHost,
+					SSHPort: forgejoSSHPort,
+				},
+			}
+			Expect(k8sClient.Create(ctx, instance)).To(Succeed())
+			instanceReconciler := &ForgejoReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := instanceReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: instanceName}})
+			Expect(err).NotTo(HaveOccurred())
+
+			org := &forgejoschrankedev1alpha1.ForgejoOrganization{
+				ObjectMeta: metav1.ObjectMeta{Name: orgName, Namespace: "default"},
+				Spec: forgejoschrankedev1alpha1.ForgejoOrganizationSpec{
+					InstanceRef: forgejoschrankedev1alpha1.InstanceRef{Name: instanceName},
+					Visibility:  "public",
+				},
+			}
+			Expect(k8sClient.Create(ctx, org)).To(Succeed())
+			orgReconciler := &ForgejoOrganizationReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err = orgReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: orgName}})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			resource := &forgejoschrankedev1alpha1.ForgejoRepository{}
+			if err := k8sClient.Get(ctx, typeNamespacedName, resource); err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+				_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			orgReconciler := &ForgejoOrganizationReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			org := &forgejoschrankedev1alpha1.ForgejoOrganization{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: "default", Name: orgName}, org); err == nil {
+				Expect(k8sClient.Delete(ctx, org)).To(Succeed())
+				_, err := orgReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: orgName}})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			_ = k8sClient.Delete(ctx, &forgejoschrankedev1alpha1.Forgejo{ObjectMeta: metav1.ObjectMeta{Name: instanceName}})
+			_ = k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: authSecretName, Namespace: "default"}})
+			_ = k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: deployKeySecretName, Namespace: "default"}})
+			_ = directClient.DeleteRepo(ctx, orgName, resourceName)
+		})
+
+		It("provisions a repo-scoped, read-only deploy key and publishes it as an owned Secret", func() {
+			resource := &forgejoschrankedev1alpha1.ForgejoRepository{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				Spec: forgejoschrankedev1alpha1.ForgejoRepositorySpec{
+					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: orgName},
+					DeployKey: &forgejoschrankedev1alpha1.DeployKeySpec{
+						Enabled:    true,
+						SecretName: deployKeySecretName,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking the CR status recorded the deploy key ID and secret name")
+			updated := &forgejoschrankedev1alpha1.ForgejoRepository{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
+			Expect(updated.Status.Status).To(Equal("Ready"))
+			Expect(updated.Status.DeployKeyID).NotTo(BeZero())
+			Expect(updated.Status.DeployKeySecretName).To(Equal(deployKeySecretName))
+
+			By("checking the Secret exists in the repository's own namespace, owned by the CR")
+			secret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: deployKeySecretName, Namespace: "default"}, secret)).To(Succeed())
+			Expect(secret.Data).To(HaveKey("identity"))
+			Expect(secret.Data).To(HaveKey("identity.pub"))
+			Expect(secret.Data).To(HaveKey("known_hosts"))
+			owner := metav1.GetControllerOf(secret)
+			Expect(owner).NotTo(BeNil())
+			Expect(owner.Name).To(Equal(resourceName))
+			Expect(owner.Kind).To(Equal("ForgejoRepository"))
+
+			By("checking the key is registered on Forgejo as read-only and matches the Secret")
+			keys, err := directClient.ListDeployKeys(ctx, orgName, resourceName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys).To(HaveLen(1))
+			Expect(keys[0].ID).To(Equal(updated.Status.DeployKeyID))
+			Expect(keys[0].ReadOnly).To(BeTrue())
+			Expect(keys[0].Key).To(Equal(strings.TrimSpace(string(secret.Data["identity.pub"]))))
+
+			By("reconciling again and checking the key and secret aren't duplicated or regenerated")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			keys, err = directClient.ListDeployKeys(ctx, orgName, resourceName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys).To(HaveLen(1))
+
+			secretAfter := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: deployKeySecretName, Namespace: "default"}, secretAfter)).To(Succeed())
+			Expect(secretAfter.Data["identity.pub"]).To(Equal(secret.Data["identity.pub"]))
+		})
+
+		It("defaults the Secret name to <repository-name>-deploy-key when unset", func() {
+			resource := &forgejoschrankedev1alpha1.ForgejoRepository{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				Spec: forgejoschrankedev1alpha1.ForgejoRepositorySpec{
+					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: orgName},
+					DeployKey:       &forgejoschrankedev1alpha1.DeployKeySpec{Enabled: true},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			defaultSecretName := resourceName + "-deploy-key"
+			secret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: defaultSecretName, Namespace: "default"}, secret)).To(Succeed())
+
+			_ = k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: defaultSecretName, Namespace: "default"}})
+		})
+
+		It("revokes the remote key and removes the Secret when deployKey is disabled after being enabled", func() {
+			resource := &forgejoschrankedev1alpha1.ForgejoRepository{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				Spec: forgejoschrankedev1alpha1.ForgejoRepositorySpec{
+					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: orgName},
+					DeployKey: &forgejoschrankedev1alpha1.DeployKeySpec{
+						Enabled:    true,
+						SecretName: deployKeySecretName,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			keys, err := directClient.ListDeployKeys(ctx, orgName, resourceName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys).To(HaveLen(1))
+
+			By("disabling the deploy key and reconciling again")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.DeployKey.Enabled = false
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			keys, err = directClient.ListDeployKeys(ctx, orgName, resourceName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys).To(BeEmpty())
+
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: deployKeySecretName, Namespace: "default"}, &corev1.Secret{})
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+
+			updated := &forgejoschrankedev1alpha1.ForgejoRepository{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
+			Expect(updated.Status.DeployKeyID).To(BeZero())
+			Expect(updated.Status.DeployKeySecretName).To(BeEmpty())
+		})
+
+		It("revokes the remote deploy key when the ForgejoRepository is deleted", func() {
+			resource := &forgejoschrankedev1alpha1.ForgejoRepository{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				Spec: forgejoschrankedev1alpha1.ForgejoRepositorySpec{
+					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: orgName},
+					DeployKey: &forgejoschrankedev1alpha1.DeployKeySpec{
+						Enabled:    true,
+						SecretName: deployKeySecretName,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			keys, err := directClient.ListDeployKeys(ctx, orgName, resourceName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys).To(HaveLen(1))
+
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = directClient.GetRepo(ctx, orgName, resourceName)
+			Expect(errors.Is(err, forgejoapi.ErrNotFound)).To(BeTrue())
 		})
 	})
 })
