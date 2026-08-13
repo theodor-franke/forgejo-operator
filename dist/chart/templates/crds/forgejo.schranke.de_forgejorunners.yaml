@@ -1,0 +1,177 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    helm.sh/resource-policy: keep
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: forgejorunners.forgejo.schranke.de
+spec:
+  group: forgejo.schranke.de
+  names:
+    kind: ForgejoRunner
+    listKind: ForgejoRunnerList
+    plural: forgejorunners
+    singular: forgejorunner
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.status
+      name: Status
+      type: string
+    - jsonPath: .status.runnerID
+      name: Runner ID
+      type: integer
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ForgejoRunner is the Schema for the forgejorunners API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ForgejoRunnerSpec defines the desired state of ForgejoRunner.
+            properties:
+              dindImage:
+                description: |-
+                  DindImage is the Docker-in-Docker sidecar image job containers run
+                  through, keeping job workloads isolated from the node's own Docker
+                  daemon instead of mounting its socket. Defaults to the upstream
+                  docker:*-dind image if unset.
+                type: string
+              image:
+                description: |-
+                  Image is the forgejo-runner container image to deploy. Defaults to the
+                  upstream data.forgejo.org/forgejo/runner image if unset.
+                type: string
+              labels:
+                description: |-
+                  Labels are the Forgejo Actions runner labels this runner registers
+                  with, e.g. "docker:docker://node:20-bookworm" -- they determine which
+                  "runs-on" values in a workflow this runner accepts, and, for
+                  docker://-prefixed labels, which image a job step runs in. Defaults to
+                  a single generic "docker" label if unset.
+                items:
+                  type: string
+                type: array
+              organizationRef:
+                description: |-
+                  OrganizationRef references the ForgejoOrganization this runner is
+                  registered against. The runner picks up Actions jobs from every
+                  repository in that organization.
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+              replicas:
+                default: 1
+                description: |-
+                  Replicas is the number of runner pods to run. All replicas share the
+                  same registration (Forgejo allows many runner processes to poll with
+                  the same runner credentials).
+                format: int32
+                minimum: 1
+                type: integer
+              resources:
+                description: Resources sets compute resource requirements for the
+                  runner container.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This is an alpha field and requires enabling the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+            required:
+            - organizationRef
+            type: object
+          status:
+            description: ForgejoRunnerStatus defines the observed state of ForgejoRunner.
+            properties:
+              message:
+                description: |-
+                  Message contains additional detail when Status is not "Ready", such as
+                  the last error encountered while talking to the Forgejo instance.
+                type: string
+              runnerID:
+                description: RunnerID is the ID Forgejo assigned this runner at registration
+                  time.
+                format: int64
+                type: integer
+              status:
+                description: |-
+                  Status is a short, human-readable summary of the reconciliation state,
+                  e.g. "Ready" or "Error".
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

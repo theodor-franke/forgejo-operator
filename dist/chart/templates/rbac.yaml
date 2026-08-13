@@ -24,12 +24,24 @@ rules:
   - list
   - watch
 - apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - forgejo.schranke.de
   resources:
   - forgejoactionsecrets
   - forgejoes
   - forgejoorganizations
   - forgejorepositories
+  - forgejorunners
   - forgejowebhooks
   verbs:
   - create
@@ -46,6 +58,7 @@ rules:
   - forgejoes/finalizers
   - forgejoorganizations/finalizers
   - forgejorepositories/finalizers
+  - forgejorunners/finalizers
   - forgejowebhooks/finalizers
   verbs:
   - update
@@ -56,6 +69,7 @@ rules:
   - forgejoes/status
   - forgejoorganizations/status
   - forgejorepositories/status
+  - forgejorunners/status
   - forgejowebhooks/status
   verbs:
   - get

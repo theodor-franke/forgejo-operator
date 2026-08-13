@@ -1,0 +1,14 @@
+apiVersion: forgejo.schranke.de/v1alpha1
+kind: ForgejoRunner
+metadata:
+  labels:
+    app.kubernetes.io/name: forgejo-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: forgejorunner-sample
+  namespace: default
+spec:
+  organizationRef:
+    name: forgejoorganization-sample
+  replicas: 1
+  labels:
+    - "docker:docker://node:22-bookworm"

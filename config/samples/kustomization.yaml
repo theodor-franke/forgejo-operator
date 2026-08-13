@@ -5,4 +5,5 @@ resources:
 - v1alpha1_forgejoactionsecret.yaml
 - v1alpha1_forgejorepository.yaml
 - v1alpha1_forgejowebhook.yaml
+- v1alpha1_forgejorunner.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

@@ -54,4 +54,12 @@ resources:
   kind: ForgejoWebhook
   path: github.com/theodor-franke/forgejo-operator/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: forgejo.schranke.de
+  kind: ForgejoRunner
+  path: github.com/theodor-franke/forgejo-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"

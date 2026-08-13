@@ -524,3 +524,69 @@ func (c *Client) DeleteRepoHook(ctx context.Context, owner, repo string, id int6
 	}
 	return err
 }
+
+// RegisterRunnerOptions is the request body for registering a new Actions
+// runner. Unlike a plain registration token, this endpoint (added in
+// Forgejo 15) performs the full registration handshake in one plain REST
+// call and returns usable runner credentials directly -- no separate
+// exchange over the runner's own Connect-RPC protocol is needed.
+type RegisterRunnerOptions struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Ephemeral   bool   `json:"ephemeral"`
+}
+
+// RegisterRunnerResponse contains the credentials of a just-registered
+// Actions runner. Token is long-lived: it is the same secret a
+// `forgejo-runner register` CLI invocation would have written into a
+// ".runner" file, and is not retrievable again after this call returns.
+type RegisterRunnerResponse struct {
+	ID    int64  `json:"id"`
+	UUID  string `json:"uuid"`
+	Token string `json:"token"`
+}
+
+// RegisterOrgRunner registers a new Actions runner on an organization. Each
+// call creates a brand new runner registration; it is not idempotent, so
+// callers must persist the returned credentials (they cannot be fetched
+// again) and only call this once per runner.
+func (c *Client) RegisterOrgRunner(ctx context.Context, org string, opts RegisterRunnerOptions) (*RegisterRunnerResponse, error) {
+	var resp RegisterRunnerResponse
+	path := "/api/v1/orgs/" + url.PathEscape(org) + "/actions/runners"
+	if err := c.do(ctx, http.MethodPost, path, opts, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// DeleteOrgRunner removes a runner from an organization by ID. It is
+// idempotent: deleting a runner that does not exist is not an error.
+func (c *Client) DeleteOrgRunner(ctx context.Context, org string, id int64) error {
+	path := fmt.Sprintf("/api/v1/orgs/%s/actions/runners/%d", url.PathEscape(org), id)
+	err := c.do(ctx, http.MethodDelete, path, nil, nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+// Runner is the subset of a registered Forgejo Actions runner this operator
+// cares about.
+type Runner struct {
+	ID     int64    `json:"id"`
+	UUID   string   `json:"uuid"`
+	Name   string   `json:"name"`
+	Status string   `json:"status"`
+	Labels []string `json:"labels"`
+}
+
+// GetOrgRunner fetches a single runner registered on an organization by ID.
+// It returns ErrNotFound if no such runner exists.
+func (c *Client) GetOrgRunner(ctx context.Context, org string, id int64) (*Runner, error) {
+	var runner Runner
+	path := fmt.Sprintf("/api/v1/orgs/%s/actions/runners/%d", url.PathEscape(org), id)
+	if err := c.do(ctx, http.MethodGet, path, nil, &runner); err != nil {
+		return nil, err
+	}
+	return &runner, nil
+}
