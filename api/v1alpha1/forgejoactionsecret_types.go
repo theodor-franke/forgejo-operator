@@ -23,7 +23,8 @@ import (
 // ForgejoActionSecretSpec defines the desired state of ForgejoActionSecret.
 type ForgejoActionSecretSpec struct {
 	// OrganizationRef references the ForgejoOrganization this action secret
-	// belongs to.
+	// belongs to. Defaults to this object's own namespace when
+	// organizationRef.namespace is unset.
 	OrganizationRef OrganizationRef `json:"organizationRef"`
 
 	// Name is the action secret's name on Forgejo, e.g. DOCKER_PASSWORD. It
@@ -38,10 +39,14 @@ type ForgejoActionSecretSpec struct {
 	ValueFrom ValueFromSecret `json:"valueFrom"`
 }
 
-// OrganizationRef references a ForgejoOrganization by name, in the same
-// namespace as the object doing the referencing.
+// OrganizationRef references a ForgejoOrganization by name, optionally in a
+// different namespace than the object doing the referencing. Namespace
+// defaults to that object's own namespace when unset.
 type OrganizationRef struct {
 	Name string `json:"name"`
+
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // ValueFromSecret references a single key in a namespaced Kubernetes Secret.

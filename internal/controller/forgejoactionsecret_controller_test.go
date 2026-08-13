@@ -218,6 +218,38 @@ var _ = Describe("ForgejoActionSecret Controller", func() {
 			Expect(hasActionSecret("docker_password")).To(BeFalse())
 		})
 
+		It("resolves the organization across namespaces when organizationRef.namespace is set", func() {
+			const secretNamespace = "actionsecret-consumers"
+			_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: secretNamespace}})
+
+			crossNamespacedName := types.NamespacedName{Namespace: secretNamespace, Name: resourceName}
+			resource := &forgejoschrankedev1alpha1.ForgejoActionSecret{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: secretNamespace},
+				Spec: forgejoschrankedev1alpha1.ForgejoActionSecretSpec{
+					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: orgName, Namespace: "default"},
+					Name:            "DOCKER_PASSWORD",
+					ValueFrom: forgejoschrankedev1alpha1.ValueFromSecret{
+						SecretName:      valueSecretName,
+						SecretNamespace: "default",
+						Key:             "value",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: crossNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &forgejoschrankedev1alpha1.ForgejoActionSecret{}
+			Expect(k8sClient.Get(ctx, crossNamespacedName, updated)).To(Succeed())
+			Expect(updated.Status.Status).To(Equal("Ready"))
+			Expect(hasActionSecret("DOCKER_PASSWORD")).To(BeTrue())
+
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: crossNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
 		It("reports an Error status when the referenced ForgejoOrganization does not exist", func() {
 			resource := &forgejoschrankedev1alpha1.ForgejoActionSecret{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},

@@ -47,6 +47,16 @@ func resolveOrganization(ctx context.Context, c client.Client, namespace, name s
 	return org, nil
 }
 
+// organizationRefNamespace returns the namespace an OrganizationRef should
+// be resolved in: the explicit namespace if set, otherwise objNamespace (the
+// namespace of the object doing the referencing).
+func organizationRefNamespace(ref forgejoschrankedev1alpha1.OrganizationRef, objNamespace string) string {
+	if ref.Namespace != "" {
+		return ref.Namespace
+	}
+	return objNamespace
+}
+
 // resolveRepository fetches the ForgejoRepository with the given namespace
 // and name.
 func resolveRepository(ctx context.Context, c client.Client, namespace, name string) (*forgejoschrankedev1alpha1.ForgejoRepository, error) {

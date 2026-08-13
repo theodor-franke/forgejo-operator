@@ -72,7 +72,7 @@ func (r *ForgejoRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 	}
 
-	org, err := resolveOrganization(ctx, r.Client, repo.Namespace, repo.Spec.OrganizationRef.Name)
+	org, err := resolveOrganization(ctx, r.Client, organizationRefNamespace(repo.Spec.OrganizationRef, repo.Namespace), repo.Spec.OrganizationRef.Name)
 	if err != nil {
 		log.Error(err, "unable to resolve ForgejoOrganization", "organization", repo.Spec.OrganizationRef.Name)
 		return r.setStatus(ctx, repo, statusError, err.Error())
@@ -143,7 +143,7 @@ func (r *ForgejoRepositoryReconciler) reconcileDelete(ctx context.Context, repo 
 		return ctrl.Result{}, nil
 	}
 
-	org, err := resolveOrganization(ctx, r.Client, repo.Namespace, repo.Spec.OrganizationRef.Name)
+	org, err := resolveOrganization(ctx, r.Client, organizationRefNamespace(repo.Spec.OrganizationRef, repo.Namespace), repo.Spec.OrganizationRef.Name)
 	switch {
 	case apierrors.IsNotFound(err):
 		log.Info("ForgejoOrganization no longer exists, skipping remote repository cleanup",

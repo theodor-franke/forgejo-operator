@@ -127,9 +127,10 @@ func (r *ForgejoWebhookReconciler) resolveTarget(ctx context.Context, webhook *f
 		if err != nil {
 			return "", "", nil, fmt.Errorf("resolving ForgejoRepository %s/%s: %w", webhook.Namespace, webhook.Spec.RepositoryRef.Name, err)
 		}
-		org, err := resolveOrganization(ctx, r.Client, repo.Namespace, repo.Spec.OrganizationRef.Name)
+		orgNamespace := organizationRefNamespace(repo.Spec.OrganizationRef, repo.Namespace)
+		org, err := resolveOrganization(ctx, r.Client, orgNamespace, repo.Spec.OrganizationRef.Name)
 		if err != nil {
-			return "", "", nil, fmt.Errorf("resolving ForgejoOrganization %s/%s: %w", repo.Namespace, repo.Spec.OrganizationRef.Name, err)
+			return "", "", nil, fmt.Errorf("resolving ForgejoOrganization %s/%s: %w", orgNamespace, repo.Spec.OrganizationRef.Name, err)
 		}
 		instance, err := resolveInstance(ctx, r.Client, org.Spec.InstanceRef.Name)
 		if err != nil {

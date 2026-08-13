@@ -247,6 +247,35 @@ var _ = Describe("ForgejoRepository Controller", func() {
 			Expect(repo.Private).To(BeTrue())
 		})
 
+		It("resolves the organization across namespaces when organizationRef.namespace is set", func() {
+			const repoNamespace = "repository-consumers"
+			_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: repoNamespace}})
+
+			crossNamespacedName := types.NamespacedName{Namespace: repoNamespace, Name: resourceName}
+			resource := &forgejoschrankedev1alpha1.ForgejoRepository{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: repoNamespace},
+				Spec: forgejoschrankedev1alpha1.ForgejoRepositorySpec{
+					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: orgName, Namespace: "default"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: crossNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &forgejoschrankedev1alpha1.ForgejoRepository{}
+			Expect(k8sClient.Get(ctx, crossNamespacedName, updated)).To(Succeed())
+			Expect(updated.Status.Status).To(Equal("Ready"))
+
+			repo, err := directClient.GetRepo(ctx, orgName, resourceName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(repo.Name).To(Equal(resourceName))
+
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: crossNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
 		It("reports an Error status when the referenced ForgejoOrganization does not exist", func() {
 			resource := &forgejoschrankedev1alpha1.ForgejoRepository{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},

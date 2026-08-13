@@ -63,9 +63,12 @@ spec:
               organizationRef:
                 description: |-
                   OrganizationRef references the ForgejoOrganization this repository
-                  belongs to, in the same namespace as this object.
+                  belongs to. Defaults to this object's own namespace when
+                  organizationRef.namespace is unset.
                 properties:
                   name:
+                    type: string
+                  namespace:
                     type: string
                 required:
                 - name

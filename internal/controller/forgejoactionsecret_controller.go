@@ -74,7 +74,7 @@ func (r *ForgejoActionSecretReconciler) Reconcile(ctx context.Context, req ctrl.
 		}
 	}
 
-	org, err := resolveOrganization(ctx, r.Client, actionSecret.Namespace, actionSecret.Spec.OrganizationRef.Name)
+	org, err := resolveOrganization(ctx, r.Client, organizationRefNamespace(actionSecret.Spec.OrganizationRef, actionSecret.Namespace), actionSecret.Spec.OrganizationRef.Name)
 	if err != nil {
 		log.Error(err, "unable to resolve ForgejoOrganization", "organization", actionSecret.Spec.OrganizationRef.Name)
 		return r.setStatus(ctx, actionSecret, statusError, err.Error())
@@ -117,7 +117,7 @@ func (r *ForgejoActionSecretReconciler) reconcileDelete(ctx context.Context, act
 		return ctrl.Result{}, nil
 	}
 
-	org, err := resolveOrganization(ctx, r.Client, actionSecret.Namespace, actionSecret.Spec.OrganizationRef.Name)
+	org, err := resolveOrganization(ctx, r.Client, organizationRefNamespace(actionSecret.Spec.OrganizationRef, actionSecret.Namespace), actionSecret.Spec.OrganizationRef.Name)
 	switch {
 	case apierrors.IsNotFound(err):
 		log.Info("ForgejoOrganization no longer exists, skipping remote action secret cleanup",

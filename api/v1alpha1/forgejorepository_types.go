@@ -23,7 +23,8 @@ import (
 // ForgejoRepositorySpec defines the desired state of ForgejoRepository.
 type ForgejoRepositorySpec struct {
 	// OrganizationRef references the ForgejoOrganization this repository
-	// belongs to, in the same namespace as this object.
+	// belongs to. Defaults to this object's own namespace when
+	// organizationRef.namespace is unset.
 	OrganizationRef OrganizationRef `json:"organizationRef"`
 
 	// Description is shown on the repository's page in Forgejo.
