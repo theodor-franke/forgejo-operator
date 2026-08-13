@@ -27,6 +27,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -132,6 +133,9 @@ var _ = Describe("ForgejoRunner Controller", func() {
 			_ = k8sClient.Delete(ctx, &appsv1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
 			})
+			_ = k8sClient.Delete(ctx, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName + "-config", Namespace: "default"},
+			})
 		})
 
 		It("registers a real runner, stores its credentials in a Secret, and deploys it", func() {
@@ -226,6 +230,48 @@ var _ = Describe("ForgejoRunner Controller", func() {
 			Expect(k8sClient.Get(ctx, typeNamespacedName, deployment)).To(Succeed())
 			Expect(findContainer(deployment, "runner").Image).To(Equal(defaultRunnerImage))
 			Expect(findContainer(deployment, dindContainerName).Image).To(Equal(defaultDindImage))
+		})
+
+		It("generates a runner config.yaml and mounts it only when dockerAccess is set", func() {
+			resource := &forgejoschrankedev1alpha1.ForgejoRunner{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				Spec: forgejoschrankedev1alpha1.ForgejoRunnerSpec{
+					OrganizationRef: forgejoschrankedev1alpha1.RunnerOrganizationRef{Name: orgName},
+					DockerAccess:    true,
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking a ConfigMap holding config.yaml was created and mounted into the runner container")
+			configMap := &corev1.ConfigMap{}
+			configMapName := types.NamespacedName{Namespace: "default", Name: resourceName + "-config"}
+			Expect(k8sClient.Get(ctx, configMapName, configMap)).To(Succeed())
+			Expect(configMap.Data[runnerConfigFileName]).To(ContainSubstring("DOCKER_HOST"))
+			Expect(configMap.Data[runnerConfigFileName]).To(ContainSubstring("network: host"))
+
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, deployment)).To(Succeed())
+			runnerContainer := findContainer(deployment, "runner")
+			Expect(runnerContainer.Command[2]).To(ContainSubstring("--config " + runnerConfigDir + "/" + runnerConfigFileName))
+			found := false
+			for _, vm := range runnerContainer.VolumeMounts {
+				if vm.Name == runnerConfigVolume {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue())
+
+			By("checking the ConfigMap is removed again once dockerAccess is unset")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.DockerAccess = false
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			err = k8sClient.Get(ctx, configMapName, &corev1.ConfigMap{})
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		})
 
 		It("reports an Error status when the referenced ForgejoOrganization does not exist", func() {

@@ -84,6 +84,19 @@ const (
 	// dockerHost points the runner at the dind sidecar over the pod's own
 	// loopback interface -- both containers share a network namespace.
 	dockerHost = "tcp://localhost:2376"
+
+	// dindClientCertDir is where the dind sidecar writes the client half of
+	// the TLS material it generates, and where the runner container mounts
+	// it read-only to authenticate against dockerHost.
+	dindClientCertDir = dockerCertsDir + "/client"
+
+	// runnerConfigVolume/Dir/File hold the forgejo-runner config.yaml
+	// generated when spec.dockerAccess is set (see runnerConfigYAML below).
+	// Unlike the Secret/data volumes, this one is only mounted when needed --
+	// forgejo-runner runs fine off pure defaults otherwise.
+	runnerConfigVolume   = "runner-config"
+	runnerConfigDir      = "/etc/forgejo-runner"
+	runnerConfigFileName = "config.yaml"
 )
 
 // defaultRunnerLabels is used when ForgejoRunner.Spec.Labels is unset.
@@ -161,6 +174,29 @@ type runnerRegistrationFile struct {
 	Labels  []string `json:"labels"`
 }
 
+// runnerConfigYAML is the forgejo-runner config.yaml generated when
+// spec.dockerAccess is set. It puts job containers on the pod's network
+// namespace (the same one the runner and dind containers already share) so
+// they can reach dind at dockerHost exactly like the runner process itself
+// does, and mounts dind's own client TLS cert into every job container so
+// "docker"/"docker buildx" invocations inside job steps authenticate the
+// same way. See forgejo-runner's own docs on Docker-in-Docker runner
+// configuration for the runner.envs/container.valid_volumes/container.options
+// fields this relies on.
+func runnerConfigYAML() string {
+	return fmt.Sprintf(`runner:
+  envs:
+    DOCKER_HOST: %s
+    DOCKER_CERT_PATH: %s
+    DOCKER_TLS_VERIFY: "1"
+container:
+  network: host
+  valid_volumes:
+    - %s
+  options: -v %s:%s
+`, dockerHost, dindClientCertDir, dindClientCertDir, dindClientCertDir, dindClientCertDir)
+}
+
 // runnerOrganizationNamespace returns the namespace runner's organizationRef
 // should be resolved in: the explicit namespace if set, otherwise runner's
 // own namespace, matching the same-namespace default used elsewhere in this
@@ -184,6 +220,7 @@ type ForgejoRunnerReconciler struct {
 // +kubebuilder:rbac:groups=forgejo.schranke.de,resources=forgejoorganizations,verbs=get;list;watch
 // +kubebuilder:rbac:groups=forgejo.schranke.de,resources=forgejoes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 
 // Reconcile registers (once) a Forgejo Actions runner for the organization
@@ -239,6 +276,11 @@ func (r *ForgejoRunnerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.setStatus(ctx, runner, statusError, err.Error())
 	}
 	runner.Status.RunnerID = runnerID
+
+	if err := r.reconcileConfig(ctx, runner); err != nil {
+		log.Error(err, "unable to reconcile runner config")
+		return r.setStatus(ctx, runner, statusError, err.Error())
+	}
 
 	if err := r.reconcileDeployment(ctx, runner); err != nil {
 		log.Error(err, "unable to reconcile runner deployment")
@@ -320,6 +362,42 @@ func runnerIDFromSecret(secret *corev1.Secret) (int64, error) {
 	return file.ID, nil
 }
 
+// reconcileConfig creates/updates or removes the ConfigMap holding
+// runner-config.yaml (see runnerConfigYAML) to match spec.dockerAccess,
+// mirroring pullkey.go's create-or-delete-to-match-spec idiom for
+// optOutDefaultPullKey. Left absent (not just empty) when dockerAccess is
+// unset, so desiredRunnerDeploymentSpec never mounts a config volume that
+// doesn't exist.
+func (r *ForgejoRunnerReconciler) reconcileConfig(ctx context.Context, runner *forgejoschrankedev1alpha1.ForgejoRunner) error {
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: runnerConfigName(runner), Namespace: runner.Namespace},
+	}
+
+	if !runner.Spec.DockerAccess {
+		err := r.Delete(ctx, configMap)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("deleting runner config %s/%s: %w", configMap.Namespace, configMap.Name, err)
+		}
+		return nil
+	}
+
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, configMap, func() error {
+		configMap.Data = map[string]string{runnerConfigFileName: runnerConfigYAML()}
+		return controllerutil.SetControllerReference(runner, configMap, r.Scheme)
+	})
+	if err != nil {
+		return fmt.Errorf("reconciling runner config %s/%s: %w", configMap.Namespace, configMap.Name, err)
+	}
+	return nil
+}
+
+// runnerConfigName is the name of the ConfigMap reconcileConfig manages,
+// distinct from runner.Name (already used for the registration Secret and
+// the Deployment) so all three can coexist.
+func runnerConfigName(runner *forgejoschrankedev1alpha1.ForgejoRunner) string {
+	return runner.Name + "-config"
+}
+
 // reconcileDeployment creates or updates the Deployment running runner's
 // pods, keeping it in sync with spec on every reconcile.
 func (r *ForgejoRunnerReconciler) reconcileDeployment(ctx context.Context, runner *forgejoschrankedev1alpha1.ForgejoRunner) error {
@@ -361,7 +439,41 @@ func desiredRunnerDeploymentSpec(runner *forgejoschrankedev1alpha1.ForgejoRunner
 	}
 
 	privileged := true
-	dindClientCertDir := dockerCertsDir + "/client"
+
+	runnerCommand := "until [ -f " + dindClientCertDir + "/cert.pem ]; do sleep 1; done; exec forgejo-runner daemon"
+	runnerVolumeMounts := []corev1.VolumeMount{
+		{Name: runnerDataVolume, MountPath: runnerDataDir},
+		{Name: dockerCertsVolume, MountPath: dockerCertsDir, ReadOnly: true},
+	}
+	volumes := []corev1.Volume{
+		{
+			Name: runnerSecretVolume,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{SecretName: runner.Name},
+			},
+		},
+		{
+			Name:         runnerDataVolume,
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		},
+		{
+			Name:         dockerCertsVolume,
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		},
+	}
+	if runner.Spec.DockerAccess {
+		runnerCommand += " --config " + runnerConfigDir + "/" + runnerConfigFileName
+		runnerVolumeMounts = append(runnerVolumeMounts,
+			corev1.VolumeMount{Name: runnerConfigVolume, MountPath: runnerConfigDir, ReadOnly: true})
+		volumes = append(volumes, corev1.Volume{
+			Name: runnerConfigVolume,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: runnerConfigName(runner)},
+				},
+			},
+		})
+	}
 
 	return appsv1.DeploymentSpec{
 		Replicas: runner.Spec.Replicas,
@@ -403,8 +515,7 @@ func desiredRunnerDeploymentSpec(runner *forgejoschrankedev1alpha1.ForgejoRunner
 						// material once its daemon is actually up, so wait
 						// for the client cert it writes before starting the
 						// runner daemon, rather than racing it.
-						Command: []string{"sh", "-c",
-							"until [ -f " + dindClientCertDir + "/cert.pem ]; do sleep 1; done; exec forgejo-runner daemon"},
+						Command:    []string{"sh", "-c", runnerCommand},
 						WorkingDir: runnerDataDir,
 						Resources:  runnerResources,
 						Env: []corev1.EnvVar{
@@ -412,28 +523,10 @@ func desiredRunnerDeploymentSpec(runner *forgejoschrankedev1alpha1.ForgejoRunner
 							{Name: "DOCKER_CERT_PATH", Value: dindClientCertDir},
 							{Name: "DOCKER_TLS_VERIFY", Value: "1"},
 						},
-						VolumeMounts: []corev1.VolumeMount{
-							{Name: runnerDataVolume, MountPath: runnerDataDir},
-							{Name: dockerCertsVolume, MountPath: dockerCertsDir, ReadOnly: true},
-						},
+						VolumeMounts: runnerVolumeMounts,
 					},
 				},
-				Volumes: []corev1.Volume{
-					{
-						Name: runnerSecretVolume,
-						VolumeSource: corev1.VolumeSource{
-							Secret: &corev1.SecretVolumeSource{SecretName: runner.Name},
-						},
-					},
-					{
-						Name:         runnerDataVolume,
-						VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-					},
-					{
-						Name:         dockerCertsVolume,
-						VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-					},
-				},
+				Volumes: volumes,
 			},
 		},
 	}
@@ -502,6 +595,7 @@ func (r *ForgejoRunnerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&forgejoschrankedev1alpha1.ForgejoRunner{}).
 		Owns(&corev1.Secret{}).
+		Owns(&corev1.ConfigMap{}).
 		Owns(&appsv1.Deployment{}).
 		Named("forgejorunner").
 		Complete(r)

@@ -88,6 +88,20 @@ type ForgejoRunnerSpec struct {
 	// cluster ResourceQuota that requires them.
 	// +optional
 	InitResources corev1.ResourceRequirements `json:"initResources,omitempty"`
+
+	// DockerAccess, if true, makes the dind sidecar's Docker daemon reachable
+	// from *inside* job containers (e.g. so a "docker buildx build" workflow
+	// step works), not just from the runner container that spawns them.
+	// Without this, job containers have no Docker socket or DOCKER_HOST at
+	// all: only the runner process itself can talk to dind. Enabling it
+	// generates a forgejo-runner config.yaml that puts every job container on
+	// the pod's network namespace (container.network: host) and points
+	// DOCKER_HOST/DOCKER_CERT_PATH at the dind sidecar, so any job step this
+	// runner executes gets full Docker API access to that sidecar -- treat it
+	// like handing every workflow root on the pod's dind daemon. Defaults to
+	// false.
+	// +optional
+	DockerAccess bool `json:"dockerAccess,omitempty"`
 }
 
 // RunnerOrganizationRef references a ForgejoOrganization by name, optionally
