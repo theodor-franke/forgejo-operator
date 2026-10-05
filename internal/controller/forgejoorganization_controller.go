@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -37,6 +38,20 @@ import (
 // is removed from the cluster.
 const organizationFinalizer = "forgejo.schranke.de/organization-finalizer"
 
+// organizationReadyRequeueInterval controls how often a healthy
+// ForgejoOrganization is re-reconciled even without a spec change, so that
+// syncGroupTeamMap re-pushes the group-team map on a schedule rather than
+// only on ForgejoOrganization create/update/delete events. This exists to
+// self-heal the group-team map field: it lives entirely on the Forgejo
+// side (there is no REST API to read it back and diff against, see
+// forgejoweb.Client), so anything that changes it out from under the
+// operator - a human editing the same auth source in the admin UI, or an
+// observed Forgejo-side bug that has overwritten the field with the literal
+// text "map[]" (Go's fmt representation of an empty map, which is not
+// something this operator's json.Marshal-based encoding can ever produce)
+// - would otherwise stick until the next unrelated org change.
+const organizationReadyRequeueInterval = 5 * time.Minute
+
 // ForgejoOrganizationReconciler reconciles a ForgejoOrganization object
 type ForgejoOrganizationReconciler struct {
 	client.Client
@@ -53,7 +68,9 @@ type ForgejoOrganizationReconciler struct {
 // referenced Forgejo instance for every ForgejoOrganization object, and
 // pushes the resulting claimed-group-to-team mapping (aggregated across
 // every ForgejoOrganization for that instance) to the instance's first
-// OAuth2 authentication source.
+// OAuth2 authentication source. A successful reconcile is requeued after
+// organizationReadyRequeueInterval so that push happens periodically, not
+// just on spec changes - see the constant's doc comment for why.
 func (r *ForgejoOrganizationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -279,7 +296,7 @@ func (r *ForgejoOrganizationReconciler) setStatus(ctx context.Context, org *forg
 	if status != statusReady {
 		return ctrl.Result{}, fmt.Errorf("%s", message)
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: organizationReadyRequeueInterval}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

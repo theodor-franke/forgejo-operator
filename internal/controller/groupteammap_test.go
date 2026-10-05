@@ -179,5 +179,42 @@ var _ = Describe("Group-to-team map aggregation", func() {
 				},
 			}))
 		})
+
+		It("self-heals the group-team map if it is overwritten outside a ForgejoOrganization reconcile, and schedules a periodic resync to do so", func() {
+			By("creating an organization whose team claims a group")
+			itsOps := &forgejoschrankedev1alpha1.ForgejoOrganization{
+				ObjectMeta: metav1.ObjectMeta{Name: orgItsOps, Namespace: "default"},
+				Spec: forgejoschrankedev1alpha1.ForgejoOrganizationSpec{
+					InstanceRef: forgejoschrankedev1alpha1.InstanceRef{Name: instanceName},
+					Visibility:  "private",
+					Teams: []forgejoschrankedev1alpha1.Team{
+						{Name: "developer", Groups: []string{"projects-dev"}},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, itsOps)).To(Succeed())
+
+			By("reconciling and confirming the map lands correctly, with a periodic requeue scheduled")
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: orgItsOps}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0),
+				"a successful reconcile must schedule a periodic resync, since the group-team map lives only on "+
+					"the Forgejo side and nothing else notices it drifting between ForgejoOrganization spec changes")
+
+			want := map[string]map[string][]string{
+				"projects-dev": {orgItsOps: {"developer"}},
+			}
+			Expect(readStoredGroupTeamMap(ctx)).To(Equal(want))
+
+			By("overwriting the stored field out-of-band, as a Forgejo-side bug or a human editing the admin UI would")
+			corruptStoredGroupTeamMap(ctx, "map[]")
+			Expect(readStoredGroupTeamMapRaw(ctx)).To(Equal("map[]"), "the corruption helper itself should have taken effect")
+
+			By("reconciling again with no spec change, simulating the periodic requeue firing")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: orgItsOps}})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(readStoredGroupTeamMap(ctx)).To(Equal(want))
+		})
 	})
 })

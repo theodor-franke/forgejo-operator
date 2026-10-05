@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,10 +223,11 @@ type loginSourceConfig struct {
 	GroupTeamMap string `json:"GroupTeamMap"`
 }
 
-// readStoredGroupTeamMap reads and double-decodes the GroupTeamMap stored
-// for the test OAuth2 authentication source, returning it as
-// group -> organization -> []team, the same shape computeGroupTeamMap builds.
-func readStoredGroupTeamMap(ctx context.Context) map[string]map[string][]string {
+// readStoredGroupTeamMapRaw reads the raw (still JSON-string-encoded)
+// GroupTeamMap field stored for the test OAuth2 authentication source,
+// without assuming it decodes to valid JSON - useful for asserting on
+// corrupted/non-JSON content that readStoredGroupTeamMap can't represent.
+func readStoredGroupTeamMapRaw(ctx context.Context) string {
 	query := fmt.Sprintf("select cfg from login_source where id=%d", forgejoOAuth2SourceID)
 	exitCode, reader, err := forgejoContainer.Exec(ctx,
 		[]string{"sqlite3", "/data/gitea/gitea.db", query},
@@ -240,13 +242,65 @@ func readStoredGroupTeamMap(ctx context.Context) map[string]map[string][]string 
 
 	var cfg loginSourceConfig
 	Expect(json.Unmarshal(bytes.TrimSpace(output), &cfg)).To(Succeed())
+	return cfg.GroupTeamMap
+}
+
+// readStoredGroupTeamMap reads and double-decodes the GroupTeamMap stored
+// for the test OAuth2 authentication source, returning it as
+// group -> organization -> []team, the same shape computeGroupTeamMap builds.
+func readStoredGroupTeamMap(ctx context.Context) map[string]map[string][]string {
+	raw := readStoredGroupTeamMapRaw(ctx)
 
 	result := map[string]map[string][]string{}
-	if cfg.GroupTeamMap == "" {
+	if raw == "" {
 		return result
 	}
-	Expect(json.Unmarshal([]byte(cfg.GroupTeamMap), &result)).To(Succeed())
+	Expect(json.Unmarshal([]byte(raw), &result)).To(Succeed())
 	return result
+}
+
+// corruptStoredGroupTeamMap overwrites the GroupTeamMap field stored for the
+// test OAuth2 authentication source with rawValue, bypassing this operator
+// entirely (straight sqlite3 UPDATE inside the container). This simulates
+// the field being changed out from under the operator by something other
+// than a ForgejoOrganization reconcile - e.g. a human editing the same auth
+// source in the admin UI, or the literal string "map[]" (Go's fmt
+// representation of an empty map) showing up in the field, as observed
+// against a real instance; this operator's own group-team map writes always
+// go through encoding/json and can never produce that string. Used to prove
+// the periodic resync (organizationReadyRequeueInterval) self-heals drift
+// that a spec-triggered reconcile alone would never notice.
+func corruptStoredGroupTeamMap(ctx context.Context, rawValue string) {
+	selectQuery := fmt.Sprintf("select cfg from login_source where id=%d", forgejoOAuth2SourceID)
+	exitCode, reader, err := forgejoContainer.Exec(ctx,
+		[]string{"sqlite3", "/data/gitea/gitea.db", selectQuery},
+		tcexec.Multiplexed(),
+	)
+	Expect(err).NotTo(HaveOccurred())
+	output, err := io.ReadAll(reader)
+	Expect(err).NotTo(HaveOccurred())
+	if exitCode != 0 {
+		Fail(fmt.Sprintf("reading login_source config failed (exit %d): %s", exitCode, output))
+	}
+
+	var cfg map[string]any
+	Expect(json.Unmarshal(bytes.TrimSpace(output), &cfg)).To(Succeed())
+	cfg["GroupTeamMap"] = rawValue
+	newCfg, err := json.Marshal(cfg)
+	Expect(err).NotTo(HaveOccurred())
+
+	escaped := strings.ReplaceAll(string(newCfg), "'", "''")
+	updateQuery := fmt.Sprintf("update login_source set cfg='%s' where id=%d", escaped, forgejoOAuth2SourceID)
+	exitCode, reader, err = forgejoContainer.Exec(ctx,
+		[]string{"sqlite3", "/data/gitea/gitea.db", updateQuery},
+		tcexec.Multiplexed(),
+	)
+	Expect(err).NotTo(HaveOccurred())
+	output, err = io.ReadAll(reader)
+	Expect(err).NotTo(HaveOccurred())
+	if exitCode != 0 {
+		Fail(fmt.Sprintf("corrupting login_source config failed (exit %d): %s", exitCode, output))
+	}
 }
 
 // getFirstFoundEnvTestBinaryDir locates the first binary in the specified path.
