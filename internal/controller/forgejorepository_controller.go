@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	forgejoschrankedev1alpha1 "github.com/theodor-franke/forgejo-operator/api/v1alpha1"
+	"github.com/theodor-franke/forgejo-operator/internal/agekey"
 	"github.com/theodor-franke/forgejo-operator/internal/forgejoapi"
 	"github.com/theodor-franke/forgejo-operator/internal/sshkey"
 )
@@ -40,6 +42,22 @@ import (
 // delete the corresponding repository in Forgejo before the CR itself is
 // removed from the cluster.
 const repositoryFinalizer = "forgejo.schranke.de/repository-finalizer"
+
+const (
+	// sopsSecretDataField is the spec.sops Secret key holding the age
+	// private key. Flux's Kustomization decryption picks up any key ending
+	// in ".agekey".
+	sopsSecretDataField = "age.agekey"
+	// sopsPublicKeyConfigMapKey is the spec.sops ConfigMap key holding the
+	// age public key.
+	sopsPublicKeyConfigMapKey = "age.pub"
+	// sopsFilePath is where spec.sops commits its .sops.yaml in the
+	// repository.
+	sopsFilePath = ".sops.yaml"
+	// sopsDefaultBranch is the branch .sops.yaml is committed to when
+	// spec.defaultBranch is unset.
+	sopsDefaultBranch = "main"
+)
 
 // ForgejoRepositoryReconciler reconciles a ForgejoRepository object
 type ForgejoRepositoryReconciler struct {
@@ -53,6 +71,7 @@ type ForgejoRepositoryReconciler struct {
 // +kubebuilder:rbac:groups=forgejo.schranke.de,resources=forgejoorganizations,verbs=get;list;watch
 // +kubebuilder:rbac:groups=forgejo.schranke.de,resources=forgejoes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;delete
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;delete
 
 // Reconcile creates (and keeps in sync) a repository on the organization
 // referenced by spec.organizationRef. The repository's name on Forgejo is
@@ -106,6 +125,11 @@ func (r *ForgejoRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	if err := r.reconcileDeployKeyState(ctx, apiClient, instance, org.Name, repo); err != nil {
 		log.Error(err, "unable to reconcile repo-scoped deploy key")
+		return r.setStatus(ctx, repo, statusError, err.Error())
+	}
+
+	if err := r.reconcileSopsState(ctx, apiClient, org.Name, repo); err != nil {
+		log.Error(err, "unable to reconcile SOPS age key")
 		return r.setStatus(ctx, repo, statusError, err.Error())
 	}
 
@@ -257,6 +281,228 @@ func (r *ForgejoRepositoryReconciler) createDeployKeySecret(ctx context.Context,
 	return pair.PublicKey, nil
 }
 
+// reconcileSopsState provisions or removes repo's SOPS age keypair Secret
+// and public-key ConfigMap per spec.sops, keeping
+// status.sopsSecretName/status.sopsPublicKeyConfigMapName in sync so both
+// directions of the enabled/disabled transition are idempotent. The
+// committed .sops.yaml is never removed: unlike a deploy key it isn't a
+// live credential, and rewriting git history on disable would be a
+// surprising, unrequested repository mutation.
+func (r *ForgejoRepositoryReconciler) reconcileSopsState(ctx context.Context, apiClient *forgejoapi.Client, owner string, repo *forgejoschrankedev1alpha1.ForgejoRepository) error {
+	if repo.Spec.Sops != nil && repo.Spec.Sops.Enabled {
+		secretName, configMapName := sopsSecretName(repo), sopsConfigMapName(repo)
+
+		// The name was changed while enabled: drop the objects published
+		// under the old name rather than leaving them orphaned.
+		if old := repo.Status.SopsSecretName; old != "" && old != secretName {
+			if err := r.deleteSopsObject(ctx, &corev1.Secret{}, repo.Namespace, old); err != nil {
+				return err
+			}
+		}
+		if old := repo.Status.SopsPublicKeyConfigMapName; old != "" && old != configMapName {
+			if err := r.deleteSopsObject(ctx, &corev1.ConfigMap{}, repo.Namespace, old); err != nil {
+				return err
+			}
+		}
+
+		publicKey, err := r.reconcileSopsSecret(ctx, repo, secretName)
+		if err != nil {
+			return err
+		}
+		if err := r.reconcileSopsConfigMap(ctx, repo, configMapName, publicKey); err != nil {
+			return err
+		}
+		if err := reconcileSopsFile(ctx, apiClient, owner, repo, publicKey); err != nil {
+			return err
+		}
+
+		repo.Status.SopsSecretName = secretName
+		repo.Status.SopsPublicKeyConfigMapName = configMapName
+		return nil
+	}
+
+	if repo.Status.SopsSecretName == "" && repo.Status.SopsPublicKeyConfigMapName == "" {
+		return nil
+	}
+
+	// spec.sops was disabled after being enabled (or removed entirely):
+	// remove the private key Secret and public key ConfigMap.
+	if name := repo.Status.SopsSecretName; name != "" {
+		if err := r.deleteSopsObject(ctx, &corev1.Secret{}, repo.Namespace, name); err != nil {
+			return err
+		}
+	}
+	if name := repo.Status.SopsPublicKeyConfigMapName; name != "" {
+		if err := r.deleteSopsObject(ctx, &corev1.ConfigMap{}, repo.Namespace, name); err != nil {
+			return err
+		}
+	}
+
+	repo.Status.SopsSecretName = ""
+	repo.Status.SopsPublicKeyConfigMapName = ""
+	return nil
+}
+
+// deleteSopsObject deletes the spec.sops Secret or ConfigMap (obj selects
+// which) named name in namespace, tolerating it already being gone.
+func (r *ForgejoRepositoryReconciler) deleteSopsObject(ctx context.Context, obj client.Object, namespace, name string) error {
+	obj.SetNamespace(namespace)
+	obj.SetName(name)
+	if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("removing SOPS %T %s/%s: %w", obj, namespace, name, err)
+	}
+	return nil
+}
+
+// sopsSecretName returns the name spec.sops's Secret should be
+// created/looked up under: an explicit spec.sops.secretName if set,
+// otherwise the fixed "sops-age". Deliberately not derived from the
+// repository name: Flux Kustomizations referencing it as
+// spec.decryption.secretRef.name commonly hardcode this literal.
+func sopsSecretName(repo *forgejoschrankedev1alpha1.ForgejoRepository) string {
+	if repo.Spec.Sops != nil && repo.Spec.Sops.SecretName != "" {
+		return repo.Spec.Sops.SecretName
+	}
+	return "sops-age"
+}
+
+// sopsConfigMapName returns the name spec.sops's public-key ConfigMap
+// should be created/looked up under: an explicit
+// spec.sops.publicKeyConfigMapName if set, otherwise "sops-age-public-key".
+func sopsConfigMapName(repo *forgejoschrankedev1alpha1.ForgejoRepository) string {
+	if repo.Spec.Sops != nil && repo.Spec.Sops.PublicKeyConfigMapName != "" {
+		return repo.Spec.Sops.PublicKeyConfigMapName
+	}
+	return "sops-age-public-key"
+}
+
+// reconcileSopsSecret ensures the age private key Secret named secretName
+// exists in repo's namespace, generating a new keypair only if it doesn't
+// (an existing key is never rotated). It returns the public key, always
+// re-derived from the Secret's private key so the Secret stays the single
+// source of truth that the ConfigMap and .sops.yaml follow.
+func (r *ForgejoRepositoryReconciler) reconcileSopsSecret(ctx context.Context, repo *forgejoschrankedev1alpha1.ForgejoRepository, secretName string) (string, error) {
+	getErr := r.Get(ctx, client.ObjectKey{Name: secretName, Namespace: repo.Namespace}, &corev1.Secret{})
+	switch {
+	case getErr == nil:
+		privateKey, err := fetchSecretKey(ctx, r.Client, repo.Namespace, secretName, sopsSecretDataField)
+		if err != nil {
+			return "", err
+		}
+		publicKey, err := agekey.PublicKey(privateKey)
+		if err != nil {
+			return "", fmt.Errorf("reading SOPS age key from secret %s/%s: %w", repo.Namespace, secretName, err)
+		}
+		return publicKey, nil
+	case apierrors.IsNotFound(getErr):
+		pair, err := agekey.Generate()
+		if err != nil {
+			return "", fmt.Errorf("generating SOPS age key: %w", err)
+		}
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: repo.Namespace},
+			StringData: map[string]string{sopsSecretDataField: pair.PrivateKey},
+		}
+		if err := controllerutil.SetControllerReference(repo, secret, r.Scheme); err != nil {
+			return "", fmt.Errorf("setting owner reference on SOPS age key secret: %w", err)
+		}
+		if err := r.Create(ctx, secret); err != nil {
+			return "", fmt.Errorf("creating SOPS age key secret %s/%s: %w", repo.Namespace, secretName, err)
+		}
+		return pair.PublicKey, nil
+	default:
+		return "", fmt.Errorf("getting SOPS age key secret %s/%s: %w", repo.Namespace, secretName, getErr)
+	}
+}
+
+// reconcileSopsConfigMap ensures the ConfigMap named configMapName in repo's
+// namespace publishes publicKey, creating it (owned by repo) if missing or
+// correcting it if it drifted from the Secret.
+func (r *ForgejoRepositoryReconciler) reconcileSopsConfigMap(ctx context.Context, repo *forgejoschrankedev1alpha1.ForgejoRepository, configMapName, publicKey string) error {
+	configMap := &corev1.ConfigMap{}
+	getErr := r.Get(ctx, client.ObjectKey{Name: configMapName, Namespace: repo.Namespace}, configMap)
+	switch {
+	case getErr == nil:
+		if configMap.Data[sopsPublicKeyConfigMapKey] == publicKey {
+			return nil
+		}
+		if configMap.Data == nil {
+			configMap.Data = map[string]string{}
+		}
+		configMap.Data[sopsPublicKeyConfigMapKey] = publicKey
+		if err := r.Update(ctx, configMap); err != nil {
+			return fmt.Errorf("updating SOPS public key configmap %s/%s: %w", repo.Namespace, configMapName, err)
+		}
+		return nil
+	case apierrors.IsNotFound(getErr):
+		configMap = &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: configMapName, Namespace: repo.Namespace},
+			Data:       map[string]string{sopsPublicKeyConfigMapKey: publicKey},
+		}
+		if err := controllerutil.SetControllerReference(repo, configMap, r.Scheme); err != nil {
+			return fmt.Errorf("setting owner reference on SOPS public key configmap: %w", err)
+		}
+		if err := r.Create(ctx, configMap); err != nil {
+			return fmt.Errorf("creating SOPS public key configmap %s/%s: %w", repo.Namespace, configMapName, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("getting SOPS public key configmap %s/%s: %w", repo.Namespace, configMapName, getErr)
+	}
+}
+
+// sopsFileContent is the .sops.yaml spec.sops commits for publicKey. It
+// deliberately has no path_regex, so the rule applies to every file.
+func sopsFileContent(publicKey string) string {
+	return fmt.Sprintf("creation_rules:\n  - age: %s\n", publicKey)
+}
+
+// reconcileSopsFile ensures .sops.yaml on repo's default branch (or
+// sopsDefaultBranch if unset) references publicKey, committing it if missing
+// and updating it if it differs. This needs the branch to already exist, so
+// a repository created without autoInit errors here until something is
+// pushed, and is retried on a later reconcile.
+func reconcileSopsFile(ctx context.Context, apiClient *forgejoapi.Client, owner string, repo *forgejoschrankedev1alpha1.ForgejoRepository, publicKey string) error {
+	branch := repo.Spec.DefaultBranch
+	if branch == "" {
+		branch = sopsDefaultBranch
+	}
+	desired := sopsFileContent(publicKey)
+	encoded := base64.StdEncoding.EncodeToString([]byte(desired))
+
+	existing, err := apiClient.GetContents(ctx, owner, repo.Name, sopsFilePath, branch)
+	switch {
+	case errors.Is(err, forgejoapi.ErrNotFound):
+		if err := apiClient.CreateFile(ctx, owner, repo.Name, sopsFilePath, forgejoapi.CreateFileOptions{
+			Content: encoded,
+			Message: "chore: add " + sopsFilePath,
+			Branch:  branch,
+		}); err != nil {
+			return fmt.Errorf("committing %s: %w", sopsFilePath, err)
+		}
+		return nil
+	case err != nil:
+		return fmt.Errorf("reading %s: %w", sopsFilePath, err)
+	}
+
+	current, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(existing.Content), ""))
+	if err != nil {
+		return fmt.Errorf("decoding %s: %w", sopsFilePath, err)
+	}
+	if string(current) == desired {
+		return nil
+	}
+	if err := apiClient.UpdateFile(ctx, owner, repo.Name, sopsFilePath, forgejoapi.UpdateFileOptions{
+		Content: encoded,
+		Message: "chore: update " + sopsFilePath,
+		Branch:  branch,
+		SHA:     existing.SHA,
+	}); err != nil {
+		return fmt.Errorf("updating %s: %w", sopsFilePath, err)
+	}
+	return nil
+}
+
 // reconcileRemoteRepo creates the repository on the Forgejo instance if it
 // does not exist yet, or otherwise updates the fields the API allows
 // updating.
@@ -352,6 +598,7 @@ func (r *ForgejoRepositoryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&forgejoschrankedev1alpha1.ForgejoRepository{}).
 		Owns(&corev1.Secret{}).
+		Owns(&corev1.ConfigMap{}).
 		Named("forgejorepository").
 		Complete(r)
 }

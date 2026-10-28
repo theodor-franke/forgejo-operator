@@ -100,6 +100,34 @@ spec:
                   Private makes the repository visible only to the organization's
                   members and explicitly added collaborators.
                 type: boolean
+              sops:
+                description: |-
+                  Sops provisions a SOPS age keypair for this repository: the private key
+                  is published as a Secret in this repository's own namespace (for use as
+                  a Flux Kustomization's spec.decryption.secretRef), the public key as a
+                  ConfigMap in the same namespace, and a .sops.yaml file referencing the
+                  public key is committed to the repository's default branch. Defaults to
+                  disabled for backward compat.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled provisions the age keypair, Secret, ConfigMap, and committed
+                      .sops.yaml when true.
+                    type: boolean
+                  publicKeyConfigMapName:
+                    description: |-
+                      PublicKeyConfigMapName overrides the generated ConfigMap's name.
+                      Defaults to "sops-age-public-key" when unset.
+                    type: string
+                  secretName:
+                    description: |-
+                      SecretName overrides the generated Secret's name. Defaults to
+                      "sops-age" when unset — this matches the fixed name
+                      cluster-projects' Flux Kustomizations already reference as
+                      spec.decryption.secretRef.name, so leave this unset unless you know
+                      you need to change it.
+                    type: string
+                type: object
               template:
                 description: |-
                   Template marks the repository as a template others can generate new
@@ -130,6 +158,19 @@ spec:
                 description: |-
                   Message contains additional detail when Status is not "Ready", such as
                   the last error encountered while talking to the Forgejo instance.
+                type: string
+              sopsPublicKeyConfigMapName:
+                description: |-
+                  SopsPublicKeyConfigMapName is the name of the ConfigMap spec.sops last
+                  published the public key as, so it can still be found and removed if
+                  spec.sops.publicKeyConfigMapName changes or spec.sops is removed
+                  entirely.
+                type: string
+              sopsSecretName:
+                description: |-
+                  SopsSecretName is the name of the Secret spec.sops last published the
+                  age keypair as, so it can still be found and removed if
+                  spec.sops.secretName changes or spec.sops is removed entirely.
                 type: string
               status:
                 description: |-

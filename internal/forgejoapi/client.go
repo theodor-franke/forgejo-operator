@@ -452,6 +452,54 @@ func (c *Client) DeleteDeployKey(ctx context.Context, owner, repo string, id int
 	return err
 }
 
+// ContentsResponse is the subset of Forgejo's repository-contents response
+// this operator cares about.
+type ContentsResponse struct {
+	SHA     string `json:"sha"`
+	Content string `json:"content"` // base64, per the API
+}
+
+// GetContents fetches filepath at ref (branch/tag/commit) in owner/repo.
+// Returns ErrNotFound if the file doesn't exist at that ref.
+func (c *Client) GetContents(ctx context.Context, owner, repo, filepath, ref string) (*ContentsResponse, error) {
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/contents/%s?ref=%s",
+		url.PathEscape(owner), url.PathEscape(repo), filepath, url.QueryEscape(ref))
+	var out ContentsResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CreateFileOptions is the request body for CreateFile.
+type CreateFileOptions struct {
+	Content string `json:"content"` // base64
+	Message string `json:"message"`
+	Branch  string `json:"branch"`
+}
+
+// CreateFile creates filepath in owner/repo on branch. Fails if the file
+// already exists — callers must GetContents first to decide create vs.
+// update, same idiom as deploy keys/webhooks elsewhere in this client.
+func (c *Client) CreateFile(ctx context.Context, owner, repo, filepath string, opts CreateFileOptions) error {
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/contents/%s", url.PathEscape(owner), url.PathEscape(repo), filepath)
+	return c.do(ctx, http.MethodPost, path, opts, nil)
+}
+
+// UpdateFileOptions is the request body for UpdateFile.
+type UpdateFileOptions struct {
+	Content string `json:"content"` // base64
+	Message string `json:"message"`
+	Branch  string `json:"branch"`
+	SHA     string `json:"sha"` // the file's current blob SHA, from GetContents
+}
+
+// UpdateFile updates the already-existing filepath in owner/repo on branch.
+func (c *Client) UpdateFile(ctx context.Context, owner, repo, filepath string, opts UpdateFileOptions) error {
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/contents/%s", url.PathEscape(owner), url.PathEscape(repo), filepath)
+	return c.do(ctx, http.MethodPut, path, opts, nil)
+}
+
 // Hook is a repository webhook.
 type Hook struct {
 	ID     int64             `json:"id"`

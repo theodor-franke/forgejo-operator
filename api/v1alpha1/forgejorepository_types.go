@@ -65,6 +65,15 @@ type ForgejoRepositorySpec struct {
 	// same-namespace secrets). Defaults to disabled for backward compat.
 	// +optional
 	DeployKey *DeployKeySpec `json:"deployKey,omitempty"`
+
+	// Sops provisions a SOPS age keypair for this repository: the private key
+	// is published as a Secret in this repository's own namespace (for use as
+	// a Flux Kustomization's spec.decryption.secretRef), the public key as a
+	// ConfigMap in the same namespace, and a .sops.yaml file referencing the
+	// public key is committed to the repository's default branch. Defaults to
+	// disabled for backward compat.
+	// +optional
+	Sops *SopsSpec `json:"sops,omitempty"`
 }
 
 // DeployKeySpec configures automatic provisioning of a read-only,
@@ -85,6 +94,31 @@ type DeployKeySpec struct {
 	// SSH auth secretRef convention).
 	// +optional
 	SecretName string `json:"secretName,omitempty"`
+}
+
+// SopsSpec configures automatic provisioning of a SOPS age keypair for
+// decrypting secrets in this repository, published as a Secret +
+// ConfigMap pair in the referencing ForgejoRepository's own namespace, with
+// the public key also committed to the repository as .sops.yaml so project
+// owners can encrypt new secrets without needing read access to the Secret.
+type SopsSpec struct {
+	// Enabled provisions the age keypair, Secret, ConfigMap, and committed
+	// .sops.yaml when true.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// SecretName overrides the generated Secret's name. Defaults to
+	// "sops-age" when unset — this matches the fixed name
+	// cluster-projects' Flux Kustomizations already reference as
+	// spec.decryption.secretRef.name, so leave this unset unless you know
+	// you need to change it.
+	// +optional
+	SecretName string `json:"secretName,omitempty"`
+
+	// PublicKeyConfigMapName overrides the generated ConfigMap's name.
+	// Defaults to "sops-age-public-key" when unset.
+	// +optional
+	PublicKeyConfigMapName string `json:"publicKeyConfigMapName,omitempty"`
 }
 
 // ForgejoRepositoryStatus defines the observed state of ForgejoRepository.
@@ -112,6 +146,19 @@ type ForgejoRepositoryStatus struct {
 	// removed entirely.
 	// +optional
 	DeployKeySecretName string `json:"deployKeySecretName,omitempty"`
+
+	// SopsSecretName is the name of the Secret spec.sops last published the
+	// age keypair as, so it can still be found and removed if
+	// spec.sops.secretName changes or spec.sops is removed entirely.
+	// +optional
+	SopsSecretName string `json:"sopsSecretName,omitempty"`
+
+	// SopsPublicKeyConfigMapName is the name of the ConfigMap spec.sops last
+	// published the public key as, so it can still be found and removed if
+	// spec.sops.publicKeyConfigMapName changes or spec.sops is removed
+	// entirely.
+	// +optional
+	SopsPublicKeyConfigMapName string `json:"sopsPublicKeyConfigMapName,omitempty"`
 }
 
 // +kubebuilder:object:root=true
