@@ -53,6 +53,12 @@ spec:
                   DefaultBranch sets the repository's default branch. On creation it
                   only takes effect when AutoInit is true.
                 type: string
+              deleteBranchAfterMerge:
+                default: true
+                description: |-
+                  DeleteBranchAfterMerge pre-checks "Delete branch after merge" on this
+                  repository's pull requests. Defaults to true.
+                type: boolean
               deployKey:
                 description: |-
                   DeployKey provisions a read-only, repo-scoped SSH deploy key and

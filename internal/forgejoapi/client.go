@@ -330,6 +330,8 @@ type Repository struct {
 	Private       bool   `json:"private"`
 	Template      bool   `json:"template"`
 	DefaultBranch string `json:"default_branch"`
+
+	DefaultDeleteBranchAfterMerge bool `json:"default_delete_branch_after_merge"`
 }
 
 // CreateRepoOptions is the request body for creating a repository in an
@@ -345,11 +347,15 @@ type CreateRepoOptions struct {
 }
 
 // EditRepoOptions is the request body for updating a repository.
+// DefaultDeleteBranchAfterMerge has no CreateRepoOptions counterpart: it can
+// only be set by editing.
 type EditRepoOptions struct {
 	Description   string `json:"description"`
 	Private       bool   `json:"private"`
 	Template      bool   `json:"template"`
 	DefaultBranch string `json:"default_branch,omitempty"`
+
+	DefaultDeleteBranchAfterMerge bool `json:"default_delete_branch_after_merge"`
 }
 
 // GetRepo fetches a repository by owner (organization) and name. It returns

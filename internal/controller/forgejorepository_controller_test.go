@@ -31,6 +31,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -213,6 +214,34 @@ var _ = Describe("ForgejoRepository Controller", func() {
 			Expect(repo.Description).To(Equal("updated description"))
 			Expect(repo.Private).To(BeTrue())
 			Expect(repo.Template).To(BeTrue())
+		})
+
+		It("deletes branches after merge by default and stops when deleteBranchAfterMerge is false", func() {
+			resource := &forgejoschrankedev1alpha1.ForgejoRepository{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				Spec: forgejoschrankedev1alpha1.ForgejoRepositorySpec{
+					OrganizationRef: forgejoschrankedev1alpha1.OrganizationRef{Name: orgName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking the setting is on after the very first (creating) reconcile")
+			repo, err := directClient.GetRepo(ctx, orgName, resourceName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(repo.DefaultDeleteBranchAfterMerge).To(BeTrue())
+
+			By("turning it off")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.DeleteBranchAfterMerge = ptr.To(false)
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			repo, err = directClient.GetRepo(ctx, orgName, resourceName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(repo.DefaultDeleteBranchAfterMerge).To(BeFalse())
 		})
 
 		It("adopts a repository that already exists on the server before the CR is created", func() {
