@@ -53,6 +53,12 @@ type ForgejoRepositorySpec struct {
 	// +optional
 	DefaultBranch string `json:"defaultBranch,omitempty"`
 
+	// DeleteBranchAfterMerge pre-checks "Delete branch after merge" on this
+	// repository's pull requests. Defaults to true.
+	// +optional
+	// +kubebuilder:default=true
+	DeleteBranchAfterMerge *bool `json:"deleteBranchAfterMerge,omitempty"`
+
 	// OptOutDefaultPullKey skips adding the Forgejo instance's shared
 	// default deploy key (see Forgejo.spec.defaultPullKeySecretRef) to this
 	// repository. Has no effect if the instance doesn't have one configured.

@@ -504,33 +504,38 @@ func reconcileSopsFile(ctx context.Context, apiClient *forgejoapi.Client, owner 
 }
 
 // reconcileRemoteRepo creates the repository on the Forgejo instance if it
-// does not exist yet, or otherwise updates the fields the API allows
-// updating.
+// does not exist yet, then updates the fields the API allows updating. The
+// edit also runs right after a create, since some settings (delete branch
+// after merge) can only be set by editing.
 func reconcileRemoteRepo(ctx context.Context, apiClient *forgejoapi.Client, owner string, repo *forgejoschrankedev1alpha1.ForgejoRepository) error {
 	repoName := repo.Name
 
 	_, err := apiClient.GetRepo(ctx, owner, repoName)
 	switch {
 	case errors.Is(err, forgejoapi.ErrNotFound):
-		_, err = apiClient.CreateOrgRepo(ctx, owner, forgejoapi.CreateRepoOptions{
+		if _, err := apiClient.CreateOrgRepo(ctx, owner, forgejoapi.CreateRepoOptions{
 			Name:          repoName,
 			Description:   repo.Spec.Description,
 			Private:       repo.Spec.Private,
 			Template:      repo.Spec.Template,
 			AutoInit:      repo.Spec.AutoInit,
 			DefaultBranch: repo.Spec.DefaultBranch,
-		})
-		return err
+		}); err != nil {
+			return err
+		}
 	case err != nil:
 		return err
-	default:
-		return apiClient.EditRepo(ctx, owner, repoName, forgejoapi.EditRepoOptions{
-			Description:   repo.Spec.Description,
-			Private:       repo.Spec.Private,
-			Template:      repo.Spec.Template,
-			DefaultBranch: repo.Spec.DefaultBranch,
-		})
 	}
+
+	return apiClient.EditRepo(ctx, owner, repoName, forgejoapi.EditRepoOptions{
+		Description:   repo.Spec.Description,
+		Private:       repo.Spec.Private,
+		Template:      repo.Spec.Template,
+		DefaultBranch: repo.Spec.DefaultBranch,
+		// nil only on objects the apiserver never defaulted (e.g. built
+		// in-process); treat it like the CRD default.
+		DefaultDeleteBranchAfterMerge: repo.Spec.DeleteBranchAfterMerge == nil || *repo.Spec.DeleteBranchAfterMerge,
+	})
 }
 
 // reconcileDelete removes the repository from the Forgejo instance and then

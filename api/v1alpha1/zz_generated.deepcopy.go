@@ -364,6 +364,11 @@ func (in *ForgejoRepositoryList) DeepCopyObject() runtime.Object {
 func (in *ForgejoRepositorySpec) DeepCopyInto(out *ForgejoRepositorySpec) {
 	*out = *in
 	out.OrganizationRef = in.OrganizationRef
+	if in.DeleteBranchAfterMerge != nil {
+		in, out := &in.DeleteBranchAfterMerge, &out.DeleteBranchAfterMerge
+		*out = new(bool)
+		**out = **in
+	}
 	if in.DeployKey != nil {
 		in, out := &in.DeployKey, &out.DeployKey
 		*out = new(DeployKeySpec)
